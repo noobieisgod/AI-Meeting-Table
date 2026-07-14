@@ -70,6 +70,7 @@ private slots:
   void phaseAndRoundStaleResponsesAreRejected();
   void qualityControlRevisionReturnsToExecutionWithSafeDiagnostic();
   void presentProceedAliasCompletesOnce();
+  void outcomeUnknownDoesNotRecordConfirmedUsage();
 };
 
 void AsyncTests::unknownAndGenerationStaleResponsesAreRejected() {
@@ -286,6 +287,63 @@ void AsyncTests::presentProceedAliasCompletesOnce() {
   gateway.responseReady(approve);
   QCOMPARE(state->transcript.size(), 1);
   QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Completed));
+}
+
+void AsyncTests::outcomeUnknownDoesNotRecordConfirmedUsage() {
+  auto state = makeSession(Phase::Planning);
+  state->usedTokens = 11;
+  state->usedCost = 0.25;
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  WorkflowCommand turn;
+  turn.commandType = RunnerCommandType::RequestSeatTurn;
+  turn.sessionId = state->tableId;
+  turn.targetPhase = state->phase;
+  turn.targetSeatId = "seat-participant";
+  runner.executeCommand(*state, turn);
+  QCOMPARE(gateway.requests.size(), 1);
+
+  ProviderResponse unknown;
+  unknown.requestId = gateway.requests.first().requestId;
+  unknown.sessionId = state->tableId;
+  unknown.seatId = "seat-participant";
+  unknown.success = false;
+  unknown.deliveryOutcome = ProviderDeliveryOutcome::OutcomeUnknown;
+  unknown.usedTokens = 9000;
+  unknown.estimatedCost = 99.0;
+  unknown.errorMessage =
+      "The provider may have completed the request, but the app did not receive a confirmed result. Trying again could duplicate provider work or usage.";
+  unknown.runGeneration = gateway.requests.first().runGeneration;
+  gateway.responseReady(unknown);
+
+  QCOMPARE(state->usedTokens, 11);
+  QCOMPARE(state->usedCost, 0.25);
+  QVERIFY(std::any_of(state->log.cbegin(), state->log.cend(),
+                      [](const LogEvent &event) {
+                        return event.summary.contains(
+                            "could duplicate provider work or usage");
+                      }));
+
+  state->waitingForNextTurn = false;
+  runner.executeCommand(*state, turn);
+  QCOMPARE(gateway.requests.size(), 2);
+  ProviderResponse success =
+      responseFor(gateway.requests.last(), {}, "Confirmed response");
+  success.usedTokens = 7;
+  success.estimatedCost = 0.01;
+  gateway.responseReady(success);
+  QCOMPARE(state->usedTokens, 18);
+  QVERIFY(qFuzzyCompare(state->usedCost, 0.26));
 }
 
 QTEST_GUILESS_MAIN(AsyncTests)

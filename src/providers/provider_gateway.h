@@ -2,11 +2,27 @@
 
 #include <QObject>
 
+#ifdef AMT_TESTING
+#include <functional>
+
+#include <QByteArray>
+#include <QList>
+#include <QPair>
+#include <QUrl>
+#endif
+
 #include "domain/models.h"
 
 namespace amt {
 
 class CredentialStore;
+
+enum class ProviderDeliveryOutcome {
+    Succeeded,
+    DefiniteFailure,
+    OutcomeUnknown,
+    Cancelled
+};
 
 struct ProviderRequest {
     QString requestId;
@@ -25,6 +41,7 @@ struct ProviderResponse {
     QString sessionId;
     QString seatId;
     bool success = true;
+    ProviderDeliveryOutcome deliveryOutcome = ProviderDeliveryOutcome::Succeeded;
     QString content;
     bool skipped = false;
     QString decisionOutcome;
@@ -36,6 +53,27 @@ struct ProviderResponse {
     quint64 runGeneration = 0;
 };
 
+#ifdef AMT_TESTING
+struct ProviderTestRequest {
+    QUrl url;
+    QByteArray method;
+    QByteArray body;
+    QList<QPair<QByteArray, QByteArray>> headers;
+};
+
+struct ProviderTestNetworkResult {
+    int statusCode = 0;
+    QByteArray body;
+    QString transportError;
+    int networkErrorCode = 0;
+    int sslErrorCount = 0;
+    bool cancelled = false;
+    QList<QPair<QByteArray, QByteArray>> headers;
+};
+
+using ProviderTestTransport = std::function<ProviderTestNetworkResult(const ProviderTestRequest &)>;
+#endif
+
 class ProviderGateway : public QObject
 {
     Q_OBJECT
@@ -46,6 +84,12 @@ public:
     void setCredentialStore(CredentialStore *credentialStore);
 
     virtual void sendAsync(const ProviderRequest &request);
+
+#ifdef AMT_TESTING
+    static ProviderResponse processForTesting(const ProviderRequest &request,
+                                               const ProviderTestTransport &transport);
+    static bool shouldRetryForTesting(const ProviderResponse &response);
+#endif
 
 signals:
     void responseReady(const amt::ProviderResponse &response);

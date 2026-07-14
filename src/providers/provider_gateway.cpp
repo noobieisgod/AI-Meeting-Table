@@ -1,5 +1,7 @@
 #include "providers/provider_gateway.h"
 
+#include <functional>
+
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -28,7 +30,12 @@ struct NetworkResult {
     int networkErrorCode = 0;
     int sslErrorCount = 0;
     QList<QNetworkReply::RawHeaderPair> headers;
+    ProviderDeliveryOutcome deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure;
 };
+
+using JsonRequestHandler = std::function<NetworkResult(const QNetworkRequest &,
+                                                       const QByteArray &,
+                                                       const QByteArray &)>;
 
 void captureSslErrors(QNetworkReply *reply, NetworkResult *result)
 {
@@ -40,8 +47,13 @@ void captureSslErrors(QNetworkReply *reply, NetworkResult *result)
 NetworkResult performJsonRequest(QNetworkAccessManager &manager,
                                  const QNetworkRequest &request,
                                  const QByteArray &body,
-                                 const QByteArray &method = "POST")
+                                 const QByteArray &method = "POST",
+                                 const JsonRequestHandler &handler = {})
 {
+    if (handler) {
+        return handler(request, body, method);
+    }
+
     QNetworkReply *reply = nullptr;
     if (method == "POST") {
         reply = manager.post(request, body);
@@ -71,6 +83,17 @@ NetworkResult performJsonRequest(QNetworkAccessManager &manager,
         result.error = timedOut
             ? "timeout"
             : "network";
+        if (!timedOut && reply->error() == QNetworkReply::OperationCanceledError) {
+            result.deliveryOutcome = ProviderDeliveryOutcome::Cancelled;
+        } else if (method == "POST") {
+            result.deliveryOutcome = ProviderDeliveryOutcome::OutcomeUnknown;
+        } else {
+            result.deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure;
+        }
+    } else if (result.statusCode >= 300) {
+        result.deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure;
+    } else {
+        result.deliveryOutcome = ProviderDeliveryOutcome::Succeeded;
     }
     reply->deleteLater();
     return result;
@@ -538,7 +561,20 @@ double estimateAnthropicCost(const QString &model, int inputTokens, int outputTo
     return inputTokens * anthropicPricePerInputToken(model) + outputTokens * anthropicPricePerOutputToken(model);
 }
 
-ProviderResponse makeErrorResponse(const ProviderRequest &request, const QString &message)
+QString outcomeUnknownMessage()
+{
+    return QStringLiteral("The provider may have completed the request, but the app did not receive a confirmed result. Trying again could duplicate provider work or usage.");
+}
+
+QString cancelledMessage()
+{
+    return QStringLiteral("The provider request was cancelled and was not automatically retried.");
+}
+
+ProviderResponse makeErrorResponse(
+    const ProviderRequest &request,
+    const QString &message,
+    ProviderDeliveryOutcome deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure)
 {
     ProviderResponse response;
     response.requestId = request.requestId;
@@ -546,8 +582,31 @@ ProviderResponse makeErrorResponse(const ProviderRequest &request, const QString
     response.seatId = request.seatId;
     response.runGeneration = request.runGeneration;
     response.success = false;
+    response.deliveryOutcome = deliveryOutcome;
     response.errorMessage = message;
     return response;
+}
+
+ProviderResponse makeGenerationFailureResponse(const ProviderRequest &request,
+                                               const NetworkResult &result)
+{
+    if (result.deliveryOutcome == ProviderDeliveryOutcome::Cancelled) {
+        return makeErrorResponse(request,
+                                 cancelledMessage(),
+                                 ProviderDeliveryOutcome::Cancelled);
+    }
+    return makeErrorResponse(request,
+                             outcomeUnknownMessage(),
+                             ProviderDeliveryOutcome::OutcomeUnknown);
+}
+
+ProviderResponse missingCredentialResponse(const ProviderRequest &request)
+{
+    return makeErrorResponse(
+        request,
+        QString("%1 request blocked before sending | model=%2 | keyPresent=no | stage=missing API key")
+            .arg(providerKindToString(request.provider),
+                 request.model.trimmed().isEmpty() ? "<empty>" : request.model));
 }
 
 void enrichParsedSignals(const ProviderRequest &request, ProviderResponse &response)
@@ -565,7 +624,9 @@ void enrichParsedSignals(const ProviderRequest &request, ProviderResponse &respo
     }
 }
 
-ProviderResponse callOpenAi(QNetworkAccessManager &manager, const ProviderRequest &request)
+ProviderResponse callOpenAi(QNetworkAccessManager &manager,
+                            const ProviderRequest &request,
+                            const JsonRequestHandler &jsonHandler = {})
 {
     ProviderResponse response;
     response.requestId = request.requestId;
@@ -630,9 +691,14 @@ ProviderResponse callOpenAi(QNetworkAccessManager &manager, const ProviderReques
     QNetworkRequest apiRequest{QUrl("https://api.openai.com/v1/responses")};
     apiRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     apiRequest.setRawHeader("Authorization", QByteArray("Bearer ") + request.apiKey.toUtf8());
-    const auto apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    const auto apiResult = performJsonRequest(
+        manager,
+        apiRequest,
+        QJsonDocument(body).toJson(QJsonDocument::Compact),
+        "POST",
+        jsonHandler);
     if (!apiResult.error.isEmpty() || apiResult.statusCode >= 300) {
-        return makeErrorResponse(request, providerRequestFailure(request, "OpenAI", "Responses API", apiResult));
+        return makeGenerationFailureResponse(request, apiResult);
     }
 
     const auto json = QJsonDocument::fromJson(apiResult.body).object();
@@ -649,7 +715,9 @@ ProviderResponse callOpenAi(QNetworkAccessManager &manager, const ProviderReques
     return response;
 }
 
-ProviderResponse callGemini(QNetworkAccessManager &manager, const ProviderRequest &request)
+ProviderResponse callGemini(QNetworkAccessManager &manager,
+                            const ProviderRequest &request,
+                            const JsonRequestHandler &jsonHandler = {})
 {
     ProviderResponse response;
     response.requestId = request.requestId;
@@ -753,8 +821,7 @@ ProviderResponse callGemini(QNetworkAccessManager &manager, const ProviderReques
         return builtParts;
     };
 
-    bool usedReusableHandles = false;
-    QJsonArray parts = buildParts(false, &usedReusableHandles);
+    QJsonArray parts = buildParts(false, nullptr);
     if (parts.isEmpty() && !request.prompt.value("attachments").toArray().isEmpty()) {
         return makeErrorResponse(request, response.errorMessage);
     }
@@ -788,29 +855,14 @@ ProviderResponse callGemini(QNetworkAccessManager &manager, const ProviderReques
 
     QNetworkRequest apiRequest{geminiApiUrl(QString("/v1beta/models/%1:generateContent").arg(request.model), request.apiKey)};
     apiRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    NetworkResult apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    if ((apiResult.error.isEmpty() && apiResult.statusCode < 300) == false
-        && usedReusableHandles
-        && (apiResult.statusCode == 400 || apiResult.statusCode == 404)) {
-        response.attachmentProviderHandles = {};
-        parts = buildParts(true, nullptr);
-        if (parts.isEmpty() && !request.prompt.value("attachments").toArray().isEmpty()) {
-            return makeErrorResponse(request, response.errorMessage);
-        }
-        body.insert("contents", QJsonArray{QJsonObject{{"role", "user"}, {"parts", parts}}});
-        apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    }
+    const NetworkResult apiResult = performJsonRequest(
+        manager,
+        apiRequest,
+        QJsonDocument(body).toJson(QJsonDocument::Compact),
+        "POST",
+        jsonHandler);
     if (!apiResult.error.isEmpty() || apiResult.statusCode >= 300) {
-        return makeErrorResponse(request, providerRequestFailure(
-            request,
-            "Google",
-            "Gemini generateContent",
-            apiResult,
-            "failed after sending",
-            {
-                QString("toolsEnabled=%1").arg(geminiSearchEnabled ? "yes" : "no"),
-                QString("tool=%1").arg(geminiSearchEnabled ? "google_search" : "none")
-            }));
+        return makeGenerationFailureResponse(request, apiResult);
     }
 
     const auto json = QJsonDocument::fromJson(apiResult.body).object();
@@ -824,7 +876,9 @@ ProviderResponse callGemini(QNetworkAccessManager &manager, const ProviderReques
     return response;
 }
 
-ProviderResponse callAnthropic(QNetworkAccessManager &manager, const ProviderRequest &request)
+ProviderResponse callAnthropic(QNetworkAccessManager &manager,
+                               const ProviderRequest &request,
+                               const JsonRequestHandler &jsonHandler = {})
 {
     ProviderResponse response;
     response.requestId = request.requestId;
@@ -919,9 +973,14 @@ ProviderResponse callAnthropic(QNetworkAccessManager &manager, const ProviderReq
     apiRequest.setRawHeader("anthropic-version", "2023-06-01");
     apiRequest.setRawHeader("anthropic-beta", "files-api-2025-04-14");
     apiRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    const auto apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    const auto apiResult = performJsonRequest(
+        manager,
+        apiRequest,
+        QJsonDocument(body).toJson(QJsonDocument::Compact),
+        "POST",
+        jsonHandler);
     if (!apiResult.error.isEmpty() || apiResult.statusCode >= 300) {
-        return makeErrorResponse(request, providerRequestFailure(request, "Anthropic", "Messages API", apiResult));
+        return makeGenerationFailureResponse(request, apiResult);
     }
 
     const auto json = QJsonDocument::fromJson(apiResult.body).object();
@@ -932,6 +991,57 @@ ProviderResponse callAnthropic(QNetworkAccessManager &manager, const ProviderReq
     const int inputTokens = usage.value("input_tokens").toInt();
     const int outputTokens = usage.value("output_tokens").toInt();
     response.estimatedCost = estimateAnthropicCost(request.model, inputTokens, outputTokens);
+    return response;
+}
+
+bool shouldAutomaticallyRetry(const ProviderResponse &response)
+{
+    if (response.success
+        || response.deliveryOutcome != ProviderDeliveryOutcome::DefiniteFailure) {
+        return false;
+    }
+    return response.errorMessage.contains("429")
+        || response.errorMessage.contains("408")
+        || response.errorMessage.contains("500")
+        || response.errorMessage.contains("502")
+        || response.errorMessage.contains("503")
+        || response.errorMessage.contains("network=timeout", Qt::CaseInsensitive)
+        || response.errorMessage.contains("networkCode=5", Qt::CaseInsensitive);
+}
+
+ProviderResponse processProviderRequest(QNetworkAccessManager &manager,
+                                        const ProviderRequest &request,
+                                        const JsonRequestHandler &jsonHandler = {})
+{
+    ProviderResponse response;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        switch (request.provider) {
+        case ProviderKind::OpenAI:
+            response = callOpenAi(manager, request, jsonHandler);
+            break;
+        case ProviderKind::Gemini:
+            response = callGemini(manager, request, jsonHandler);
+            break;
+        case ProviderKind::Anthropic:
+            response = callAnthropic(manager, request, jsonHandler);
+            break;
+        }
+        if (response.success || attempt >= 1 || !shouldAutomaticallyRetry(response)) {
+            break;
+        }
+        QThread::msleep(3000);
+    }
+
+    if (response.success) {
+        if (response.content.trimmed().isEmpty()) {
+            response.success = false;
+            response.deliveryOutcome = ProviderDeliveryOutcome::OutcomeUnknown;
+            response.errorMessage = outcomeUnknownMessage();
+        } else {
+            response.deliveryOutcome = ProviderDeliveryOutcome::Succeeded;
+            enrichParsedSignals(request, response);
+        }
+    }
     return response;
 }
 
@@ -953,43 +1063,7 @@ public slots:
         if (!m_manager) {
             m_manager = new QNetworkAccessManager(this);
         }
-
-        amt::ProviderResponse response;
-        // Issue #18: Single-retry on transient server errors
-        for (int attempt = 0; attempt < 2; ++attempt) {
-            switch (request.provider) {
-            case amt::ProviderKind::OpenAI:
-                response = callOpenAi(*m_manager, request);
-                break;
-            case amt::ProviderKind::Gemini:
-                response = callGemini(*m_manager, request);
-                break;
-            case amt::ProviderKind::Anthropic:
-                response = callAnthropic(*m_manager, request);
-                break;
-            }
-        if (response.success || attempt >= 1) break;
-            const bool transient = response.errorMessage.contains("429")
-                                || response.errorMessage.contains("408")
-                                || response.errorMessage.contains("500")
-                                || response.errorMessage.contains("502")
-                                || response.errorMessage.contains("503")
-                                || response.errorMessage.contains("network=timeout", Qt::CaseInsensitive)
-                                || response.errorMessage.contains("networkCode=5", Qt::CaseInsensitive);
-            if (!transient) break;
-            QThread::msleep(3000);
-        }
-
-        if (response.success) {
-            if (response.content.trimmed().isEmpty()) {
-                response.success = false;
-                response.errorMessage = "The provider returned an empty response.";
-            } else {
-                enrichParsedSignals(request, response);
-            }
-        }
-
-        emit responseReady(response);
+        emit responseReady(processProviderRequest(*m_manager, request));
     }
 
 signals:
@@ -1015,6 +1089,60 @@ void ProviderGateway::setCredentialStore(CredentialStore *credentialStore)
     m_credentialStore = credentialStore;
 }
 
+#ifdef AMT_TESTING
+ProviderResponse ProviderGateway::processForTesting(const ProviderRequest &request,
+                                                    const ProviderTestTransport &transport)
+{
+    if (request.apiKey.trimmed().isEmpty()) {
+        return missingCredentialResponse(request);
+    }
+    if (!transport) {
+        return makeErrorResponse(request, "Synthetic provider transport is unavailable.");
+    }
+
+    const JsonRequestHandler handler = [transport](const QNetworkRequest &networkRequest,
+                                                   const QByteArray &body,
+                                                   const QByteArray &method) {
+        ProviderTestRequest testRequest;
+        testRequest.url = networkRequest.url();
+        testRequest.method = method;
+        testRequest.body = body;
+        for (const QByteArray &name : networkRequest.rawHeaderList()) {
+            testRequest.headers.append({name, networkRequest.rawHeader(name)});
+        }
+        const ProviderTestNetworkResult testResult = transport(testRequest);
+
+        NetworkResult result;
+        result.statusCode = testResult.statusCode;
+        result.body = testResult.body;
+        result.error = testResult.transportError;
+        result.networkErrorCode = testResult.networkErrorCode;
+        result.sslErrorCount = testResult.sslErrorCount;
+        result.headers = testResult.headers;
+        if (testResult.cancelled) {
+            result.deliveryOutcome = ProviderDeliveryOutcome::Cancelled;
+        } else if (!result.error.isEmpty()) {
+            result.deliveryOutcome = method == "POST"
+                ? ProviderDeliveryOutcome::OutcomeUnknown
+                : ProviderDeliveryOutcome::DefiniteFailure;
+        } else if (result.statusCode >= 300) {
+            result.deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure;
+        } else {
+            result.deliveryOutcome = ProviderDeliveryOutcome::Succeeded;
+        }
+        return result;
+    };
+
+    QNetworkAccessManager manager;
+    return processProviderRequest(manager, request, handler);
+}
+
+bool ProviderGateway::shouldRetryForTesting(const ProviderResponse &response)
+{
+    return shouldAutomaticallyRetry(response);
+}
+#endif
+
 void ProviderGateway::sendAsync(const ProviderRequest &request)
 {
     ProviderRequest hydratedRequest = request;
@@ -1022,10 +1150,7 @@ void ProviderGateway::sendAsync(const ProviderRequest &request)
         hydratedRequest.apiKey = m_credentialStore->loadApiKey(request.provider);
     }
     if (hydratedRequest.apiKey.trimmed().isEmpty()) {
-        emit responseReady(makeErrorResponse(request,
-                                             QString("%1 request blocked before sending | model=%2 | keyPresent=no | stage=missing API key")
-                                                 .arg(providerKindToString(request.provider),
-                                                      request.model.trimmed().isEmpty() ? "<empty>" : request.model)));
+        emit responseReady(missingCredentialResponse(request));
         return;
     }
 

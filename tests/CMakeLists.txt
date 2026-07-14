@@ -41,6 +41,7 @@ add_amt_test(test_database test_database.cpp)
 add_amt_test(test_async test_async.cpp)
 add_amt_test(test_model_catalog test_model_catalog.cpp)
 add_amt_test(test_controller test_controller.cpp)
+add_amt_test(test_provider_gateway test_provider_gateway.cpp)
 
 find_package(Java REQUIRED COMPONENTS Runtime Development)
 set(AMT_ATTACHMENT_JAVA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/attachment-java-test-classes")
