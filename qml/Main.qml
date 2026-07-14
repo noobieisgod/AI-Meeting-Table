@@ -947,7 +947,7 @@ ApplicationWindow {
         y: Math.max(24, (root.height - height) / 2)
         onAccepted: {
             var selectedModel = modelCombo.model && modelCombo.model.length > modelCombo.currentIndex ? modelCombo.model[modelCombo.currentIndex].id : "";
-            if (!root.appController.saveSeat(root.editingSeatIndex, occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex)) {
+            if (!root.appController.saveSeat(root.editingSeatIndex, occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex, root.editingSeat.color || "#49bd99")) {
                 root.showErrorIfNeeded();
             }
         }

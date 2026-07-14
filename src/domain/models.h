@@ -18,7 +18,7 @@ enum class EventType { SessionStarted, PhaseStarted, TurnStarted, TurnCompleted,
 enum class ProviderKind { OpenAI, Gemini, Anthropic };
 enum class RunnerCommandType { None, StartPhase, RunResearchBatch, RequestSeatTurn, RequestDecision, StopSession };
 enum class ModelEffort { Auto, Light, Balanced, Deep };
-enum class ThemeMode { Light, Dark };
+enum class ThemeMode { System, Light, Dark };
 
 struct ModelCatalogEntry {
     QString id;
@@ -61,13 +61,16 @@ struct SeatConfig {
     QString modelOverride;
     ModelEffort effort = ModelEffort::Auto;
     Role role = Role::None;
+    QString color;
     bool occupied = false;
     bool enabled = true;
 };
 
 struct AppSettings {
     BudgetPolicy globalBudgetDefaults;
-    ThemeMode theme = ThemeMode::Light;
+    ThemeMode theme = ThemeMode::System;
+    QString colorTheme = "Signal Session";
+    QString fontStyle = "System";
 };
 
 struct AttachmentRecord {
@@ -217,9 +220,9 @@ inline QString toString(ThemeMode theme)
 {
     switch (theme) {
     case ThemeMode::Dark: return "Dark";
-    case ThemeMode::Light:
-    default:
-        return "Light";
+    case ThemeMode::Light: return "Light";
+    case ThemeMode::System:
+    default: return "System";
     }
 }
 
@@ -351,7 +354,13 @@ inline int indexFromProviderKind(ProviderKind provider)
 
 inline ThemeMode themeModeFromString(const QString &value)
 {
-    return value.compare("Dark", Qt::CaseInsensitive) == 0 ? ThemeMode::Dark : ThemeMode::Light;
+    if (value.compare("Dark", Qt::CaseInsensitive) == 0) {
+        return ThemeMode::Dark;
+    }
+    if (value.compare("Light", Qt::CaseInsensitive) == 0) {
+        return ThemeMode::Light;
+    }
+    return ThemeMode::System;
 }
 
 inline ModelEffort effortFromString(const QString &value)
@@ -758,6 +767,7 @@ inline QJsonObject seatToJson(const SeatConfig &seat)
         {"modelOverride", seat.modelOverride},
         {"effort", toString(seat.effort)},
         {"role", toString(seat.role)},
+        {"color", seat.color},
         {"occupied", seat.occupied},
         {"enabled", seat.enabled}
     };
@@ -796,6 +806,7 @@ inline SeatConfig seatFromJson(const QJsonObject &object)
     seat.modelPreset = object.value("modelPreset").toString();
     seat.modelOverride = object.value("modelOverride").toString();
     seat.effort = effortFromString(object.value("effort").toString());
+    seat.color = object.value("color").toString();
     seat.occupied = object.value("occupied").toBool();
     seat.enabled = object.value("enabled").toBool(true);
     seat.provider = providerKindFromString(object.value("provider").toString());

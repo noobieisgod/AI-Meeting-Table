@@ -25,6 +25,7 @@ private slots:
   void granularSignalsOnlyRefreshChangedCollections();
   void fullTranscriptTextPreservesOrderAndMetadata();
   void budgetValidationRejectsInvalidRelationships();
+  void appearanceAndSeatColorAreExposed();
   void attachmentCleanupIsReferenceAndPathSafe();
   void attachmentMetadataAddedOnlyAfterSuccess();
   void tableDeletionDuringImportRemovesCompletedResult();
@@ -71,7 +72,7 @@ void ControllerTests::granularSignalsOnlyRefreshChangedCollections() {
   QCOMPARE(transcriptChanged.count(), 1);
   QCOMPARE(logsChanged.count(), 1);
 
-  QVERIFY(controller.saveSeat(0, false, "Seat 1", 0, "", 0, 0));
+  QVERIFY(controller.saveSeat(0, false, "Seat 1", 0, "", 0, 0, "#49bd99"));
   QCOMPARE(stateChanged.count(), 3);
   QCOMPARE(seatsChanged.count(), 1);
   QCOMPARE(transcriptChanged.count(), 1);
@@ -105,6 +106,28 @@ void ControllerTests::budgetValidationRejectsInvalidRelationships() {
   QVERIFY(controller.lastError().contains("session seconds"));
   QVERIFY(!controller.saveGlobalBudget(0, 2000, 1.0, 1, 1, 10, 20));
   QVERIFY(controller.lastError().contains("positive"));
+}
+
+void ControllerTests::appearanceAndSeatColorAreExposed() {
+  MobileAppController controller;
+  QVERIFY(controller.initialize());
+
+  QVERIFY(controller.saveAppearance("Dark", "Calm Workspace", "Console"));
+  const QVariantMap settings = controller.settings();
+  QCOMPARE(settings.value("appearance").toString(), QString("Dark"));
+  QCOMPARE(settings.value("colorTheme").toString(), QString("Calm Workspace"));
+  QCOMPARE(settings.value("fontStyle").toString(), QString("Console"));
+
+  QVERIFY(controller.saveSeat(0, true, "Decision seat", 0, "", 0, 1,
+                              "#ABCDEF"));
+  const QVariantList seats = controller.seats();
+  QCOMPARE(seats.first().toMap().value("color").toString(),
+           QString("#abcdef"));
+
+  const QVariantMap safeguards = controller.attachmentSafeguards();
+  QCOMPARE(safeguards.value("maximumAttachmentMiB").toLongLong(), qint64(25));
+  QCOMPARE(safeguards.value("freeSpaceReserveMiB").toLongLong(), qint64(64));
+  QCOMPARE(safeguards.value("noProgressTimeoutSeconds").toInt(), 60);
 }
 
 void ControllerTests::attachmentCleanupIsReferenceAndPathSafe() {

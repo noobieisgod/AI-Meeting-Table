@@ -52,6 +52,8 @@ public:
     Q_INVOKABLE QVariantList logs() const;
     Q_INVOKABLE QVariantList modelsForProvider(int providerIndex) const;
     Q_INVOKABLE QVariantList modelRefreshStatuses() const;
+    Q_INVOKABLE QVariantMap settings() const;
+    Q_INVOKABLE QVariantMap attachmentSafeguards() const;
     Q_INVOKABLE QString apiKey(int providerIndex) const;
     Q_INVOKABLE QString apiKeyStatus(int providerIndex) const;
     Q_INVOKABLE QString lastError() const;
@@ -68,7 +70,8 @@ public:
                               int providerIndex,
                               const QString &modelId,
                               int effortIndex,
-                              int roleIndex);
+                              int roleIndex,
+                              const QString &color);
     Q_INVOKABLE bool sendMessage(const QString &message);
     Q_INVOKABLE bool runOrResume();
     Q_INVOKABLE bool pauseSession();
@@ -79,6 +82,9 @@ public:
     Q_INVOKABLE bool saveApiKey(int providerIndex, const QString &apiKey);
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void setTheme(const QString &theme);
+    Q_INVOKABLE bool saveAppearance(const QString &appearance,
+                                    const QString &colorTheme,
+                                    const QString &fontStyle);
     Q_INVOKABLE bool saveGlobalBudget(int maxTokensPerPhase,
                                       int maxTotalTokens,
                                       double maxTotalCost,

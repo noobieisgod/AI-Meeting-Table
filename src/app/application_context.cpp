@@ -45,6 +45,8 @@ bool ApplicationContext::initialize()
     m_appSettings.globalBudgetDefaults.maxPhaseSeconds = settings.value("budget/maxPhaseSeconds", m_appSettings.globalBudgetDefaults.maxPhaseSeconds).toInt();
     m_appSettings.globalBudgetDefaults.maxSessionSeconds = settings.value("budget/maxSessionSeconds", m_appSettings.globalBudgetDefaults.maxSessionSeconds).toInt();
     m_appSettings.theme = themeModeFromString(settings.value("appearance/theme", toString(m_appSettings.theme)).toString());
+    m_appSettings.colorTheme = settings.value("appearance/colorTheme", m_appSettings.colorTheme).toString();
+    m_appSettings.fontStyle = settings.value("appearance/fontStyle", m_appSettings.fontStyle).toString();
 
     if (!m_databaseManager.initialize()) {
         return false;
@@ -299,6 +301,8 @@ void ApplicationContext::saveAppSettings() const
     settings.setValue("budget/maxPhaseSeconds", m_appSettings.globalBudgetDefaults.maxPhaseSeconds);
     settings.setValue("budget/maxSessionSeconds", m_appSettings.globalBudgetDefaults.maxSessionSeconds);
     settings.setValue("appearance/theme", toString(m_appSettings.theme));
+    settings.setValue("appearance/colorTheme", m_appSettings.colorTheme);
+    settings.setValue("appearance/fontStyle", m_appSettings.fontStyle);
 }
 
 void ApplicationContext::applyEffectiveBudgetPolicy(SessionState &state) const

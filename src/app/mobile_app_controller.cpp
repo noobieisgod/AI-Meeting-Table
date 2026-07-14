@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QElapsedTimer>
@@ -56,6 +57,15 @@ bool hasUserMessage(const SessionState &state)
 QString attachmentImportRoot()
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/attachments";
+}
+
+QString defaultSeatColor(int index)
+{
+    static const QStringList colors{
+        "#49bd99", "#e0a44d", "#6fa8dc", "#c27ba0",
+        "#8e7cc3", "#76a5af", "#cc7a6f", "#93c47d"
+    };
+    return colors.at(qBound(0, index, colors.size() - 1));
 }
 
 QString logEventTypeLabel(LogEventType type)
@@ -398,6 +408,33 @@ QVariantList MobileAppController::modelRefreshStatuses() const
     return m_context.modelCatalogManager()->fetchStatuses();
 }
 
+QVariantMap MobileAppController::settings() const
+{
+    const auto &settings = m_context.appSettings();
+    const auto &budget = settings.globalBudgetDefaults;
+    return {
+        {"appearance", toString(settings.theme)},
+        {"colorTheme", settings.colorTheme},
+        {"fontStyle", settings.fontStyle},
+        {"maxTokensPerPhase", budget.maxTokensPerPhase},
+        {"maxTotalTokens", budget.maxTotalTokens},
+        {"maxTotalCost", budget.maxTotalCost},
+        {"maxRounds", budget.maxRounds},
+        {"maxExecQcLoops", budget.maxExecQcLoops},
+        {"maxPhaseSeconds", budget.maxPhaseSeconds},
+        {"maxSessionSeconds", budget.maxSessionSeconds}
+    };
+}
+
+QVariantMap MobileAppController::attachmentSafeguards() const
+{
+    return {
+        {"maximumAttachmentMiB", AttachmentImportManager::maximumAttachmentBytes / (1024 * 1024)},
+        {"freeSpaceReserveMiB", AttachmentImportManager::freeSpaceReserveBytes / (1024 * 1024)},
+        {"noProgressTimeoutSeconds", AttachmentImportManager::noProgressTimeoutMs / 1000}
+    };
+}
+
 QString MobileAppController::apiKey(int providerIndex) const
 {
     return m_context.credentialStore()->loadApiKey(providerFromIndex(providerIndex));
@@ -568,7 +605,8 @@ bool MobileAppController::saveSeat(int seatIndex,
                                    int providerIndex,
                                    const QString &modelId,
                                    int effortIndex,
-                                   int roleIndex)
+                                   int roleIndex,
+                                   const QString &color)
 {
     auto *state = currentState();
     if (!state || seatIndex < 0 || seatIndex >= 8) {
@@ -593,6 +631,8 @@ bool MobileAppController::saveSeat(int seatIndex,
     seat.modelPreset = preferredModelDisplayName(seat.provider, modelId, modelId);
     seat.effort = effortFromEditorIndex(effortIndex);
     seat.role = roleFromEditorIndex(roleIndex);
+    static const QRegularExpression colorPattern("^#[0-9a-fA-F]{6}$");
+    seat.color = colorPattern.match(color).hasMatch() ? color.toLower() : defaultSeatColor(seatIndex);
     if (!occupied) {
         seat.role = Role::None;
         seat.effort = ModelEffort::Auto;
@@ -785,6 +825,29 @@ void MobileAppController::setTheme(const QString &theme)
     m_context.appSettings().theme = themeModeFromString(theme);
     m_context.saveAppSettings();
     emit settingsChanged();
+}
+
+bool MobileAppController::saveAppearance(const QString &appearance,
+                                         const QString &colorTheme,
+                                         const QString &fontStyle)
+{
+    const QStringList appearances{"System", "Light", "Dark"};
+    const QStringList colorThemes{"Signal Session", "Calm Workspace"};
+    const QStringList fontStyles{"System", "Workspace", "Console"};
+    if (!appearances.contains(appearance)
+        || !colorThemes.contains(colorTheme)
+        || !fontStyles.contains(fontStyle)) {
+        setError("Choose a supported appearance, color theme, and font style.");
+        return false;
+    }
+    auto &settings = m_context.appSettings();
+    settings.theme = themeModeFromString(appearance);
+    settings.colorTheme = colorTheme;
+    settings.fontStyle = fontStyle;
+    m_context.saveAppSettings();
+    setError({});
+    emit settingsChanged();
+    return true;
 }
 
 bool MobileAppController::saveGlobalBudget(int maxTokensPerPhase,
@@ -1079,6 +1142,7 @@ QVariantMap MobileAppController::seatSummary(const SeatConfig &seat, int index) 
     row.insert("effort", toString(seat.effort));
     row.insert("roleIndex", indexFromRole(seat.role));
     row.insert("role", displaySeatRole(seat.role));
+    row.insert("color", seat.color.isEmpty() ? defaultSeatColor(index) : seat.color);
     row.insert("occupied", seat.occupied);
     row.insert("enabled", seat.enabled);
     row.insert("active", state && state->activeSeatId == seat.seatId);
@@ -1098,6 +1162,22 @@ QVariantMap MobileAppController::transcriptSummary(const TranscriptEntry &entry)
     row.insert("isUser", entry.isUser);
     row.insert("isDecision", entry.isDecision);
     row.insert("timestamp", entry.timestamp.toLocalTime().toString("HH:mm:ss"));
+    row.insert("seatId", entry.speakerSeatId);
+    row.insert("role", "Participant");
+    row.insert("model", entry.isUser ? "Local input" : "Unknown model");
+    row.insert("color", "#6fa8dc");
+    const auto *state = currentState();
+    if (state && !entry.isUser) {
+        const auto seat = std::find_if(state->seats.cbegin(), state->seats.cend(), [&entry](const SeatConfig &candidate) {
+            return candidate.seatId == entry.speakerSeatId;
+        });
+        if (seat != state->seats.cend()) {
+            const int index = static_cast<int>(std::distance(state->seats.cbegin(), seat));
+            row.insert("role", displaySeatRole(seat->role));
+            row.insert("model", effectiveModelName(*seat));
+            row.insert("color", seat->color.isEmpty() ? defaultSeatColor(index) : seat->color);
+        }
+    }
     return row;
 }
 
