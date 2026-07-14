@@ -32,6 +32,14 @@ A guided, mobile-first workspace with one primary task at a time. It is the quie
 
 A dense active-meeting console built around the transcript. Persistent session telemetry and fast panels favor frequent operators who need immediate visibility of speakers, generation state, attachments, and provider status.
 
+## Preferred Concept B refinement
+
+Concept B is the preferred structural direction. Its Session page retains transcript-first operations with Seats, Attachments, Generation, and Artifacts panels. The primary session control cycles through Start, Pause, and Continue based on the local demo session state. Artifacts open in a responsive preview dialog and can be shown as populated or empty.
+
+The refined concept supports Light, Dark, and System appearance preferences; Signal session (Concept B) and Calm workspace (Concept A) color themes; and system, workspace, and console font styles. The selected settings persist only for the current browser session.
+
+Transcript messages show a speaker name and role on the left, with time and model on the right. Seat colors are editable through each seat card and update the transcript accents immediately. The settings prototype represents provider credentials, model catalog refresh, actual global hard stops, attachment safeguards, and appearance. It uses fake values only and makes no provider, credential, filesystem, or network request.
+
 ### C. Meeting Table
 
 A spatial workspace that treats seats and the shared table as the product’s organizing idea. Agenda, evidence, transcript, decisions, and actions sit around a practical central meeting surface.
@@ -46,11 +54,11 @@ A spatial workspace that treats seats and the shared table as the product’s or
 
 ## Accessibility and responsive behavior
 
-All concepts use semantic landmarks, labelled native controls, keyboard-visible focus, touch-sized buttons, status text alongside color, reduced-motion rules, and close or back actions for dialogs. They are designed for 360 × 800, 412 × 915, 800 × 1280, and 1280 × 800. Transcript areas scroll independently and long labels intentionally wrap, truncate, or reveal their full text.
+All concepts use semantic landmarks, labelled native controls, keyboard-visible focus, touch-sized buttons, status text alongside color, reduced-motion rules, and close or back actions for dialogs. The refined Concept B is designed for 360 × 800, 412 × 915, 800 × 1280, and 1280 × 800. Transcript areas scroll independently and long labels intentionally wrap, truncate, or reveal their full text.
 
 ## Limitations
 
-All data and transitions are demonstrative. Attachment import, provider calls, persistence, session timing, and generation are simulated locally. The prototypes are not a QML specification and do not replace production validation.
+All data and transitions are demonstrative. Attachment import, provider calls, persistence beyond the current browser session, session timing, and generation are simulated locally. The prototypes are not a QML specification and do not replace production validation.
 
 ## Likely QML implementation notes
 
