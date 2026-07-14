@@ -54,6 +54,12 @@ file(READ "${SOURCE_DIR}/src/app/mobile_app_controller.cpp" controller_source)
 require_absent("${controller_source}" "importAttachmentToPrivateStorage" "legacy controller-thread attachment copy")
 require_contains("${controller_source}" "result.sha256, result.byteCount" "precomputed attachment metadata handoff")
 
+file(READ "${SOURCE_DIR}/src/core/startup_timeline.cpp" startup_timeline_source)
+require_contains("${startup_timeline_source}" "AMT_STARTUP stage=%1 elapsed_ms=%2" "numeric-only startup marker format")
+require_contains("${startup_timeline_source}" "reportFullyDrawn" "Android fully-drawn report")
+require_contains("${startup_timeline_source}" "m_fullyDrawnReported" "one-shot fully-drawn guard")
+require_contains("${startup_timeline_source}" "AMT_STARTUP_TIMELINE" "opt-in Release startup diagnostics")
+
 file(READ "${SOURCE_DIR}/CMakeLists.txt" cmake_source)
 require_contains("${cmake_source}" "com.aimeetingtable.myapp" "preserved Android application ID")
 require_contains("${cmake_source}" "QT_ANDROID_MIN_SDK_VERSION 28" "Qt Android minimum SDK")

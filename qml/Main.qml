@@ -171,7 +171,12 @@ ApplicationWindow {
         });
     }
 
-    Component.onCompleted: root.refreshAll()
+    Component.onCompleted: {
+        root.appController.startupInitialRefreshStarted();
+        root.refreshAll();
+        root.appController.startupInitialRefreshCompleted();
+        root.appController.startupPrimaryControlsReady();
+    }
 
     Connections {
         target: root.appController
@@ -230,6 +235,7 @@ ApplicationWindow {
                 TranscriptScroll.restore(transcriptList, pending.state);
                 root.transcriptScrollStates[pending.tableId] = TranscriptScroll.capture(transcriptList, root.transcriptFollowThreshold);
                 root.pendingTranscriptRestore = null;
+                root.appController.startupTranscriptVisualStable();
             } else {
                 transcriptRestoreTimer.interval = pending.attempts < 12 ? 16 : 100;
                 transcriptRestoreTimer.restart();

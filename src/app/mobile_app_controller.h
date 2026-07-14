@@ -36,6 +36,10 @@ public:
     QString attachmentImportStatus() const;
 
     Q_INVOKABLE bool initialize();
+    Q_INVOKABLE void startupInitialRefreshStarted();
+    Q_INVOKABLE void startupInitialRefreshCompleted();
+    Q_INVOKABLE void startupTranscriptVisualStable();
+    Q_INVOKABLE void startupPrimaryControlsReady();
     Q_INVOKABLE QVariantList tables() const;
     Q_INVOKABLE QVariantMap currentTable() const;
     Q_INVOKABLE QVariantList seats() const;

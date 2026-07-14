@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QSet>
 #include <QUuid>
 #include <QSqlQuery>
@@ -13,6 +14,7 @@
 #include <QStandardPaths>
 
 #include "core/logging.h"
+#include "core/startup_timeline.h"
 
 namespace amt {
 
@@ -94,6 +96,8 @@ DatabaseManager::~DatabaseManager()
 
 bool DatabaseManager::initialize()
 {
+    QElapsedTimer openTimer;
+    openTimer.start();
     QDir().mkpath(QFileInfo(databasePath()).absolutePath());
     const QString name = connectionName();
     if (QSqlDatabase::contains(name)) {
@@ -106,6 +110,7 @@ bool DatabaseManager::initialize()
         qWarning().noquote() << QString("Database open failed: %1").arg(sqlErrorSummary(m_db.lastError()));
         return false;
     }
+    StartupTimeline::instance().mark(StartupStage::DatabaseOpen, openTimer.elapsed());
     qCDebug(diagnosticsLog) << "Database open succeeded";
     logDatabaseFileState("after open");
 
@@ -119,7 +124,14 @@ bool DatabaseManager::initialize()
         return false;
     }
 
-    return createSchema();
+    QElapsedTimer schemaTimer;
+    schemaTimer.start();
+    const bool schemaCreated = createSchema();
+    if (schemaCreated) {
+        StartupTimeline::instance().mark(StartupStage::SchemaInitialization,
+                                         schemaTimer.elapsed());
+    }
+    return schemaCreated;
 }
 
 bool DatabaseManager::createSchema()
@@ -327,17 +339,25 @@ void DatabaseManager::logTableRowCounts(const QString &context, const QString &t
 QVector<SessionState> DatabaseManager::loadTables()
 {
     QVector<SessionState> tables;
+    qint64 tableRestoreMs = 0;
+    qint64 transcriptRestoreMs = 0;
+    qint64 logRestoreMs = 0;
+    qint64 artifactRestoreMs = 0;
     if (!m_db.isOpen()) {
         return tables;
     }
 
     logDatabaseFileState("before load");
+    QElapsedTimer restoreTimer;
+    restoreTimer.start();
     QSqlQuery query(m_db);
     if (!query.exec("SELECT table_id, title, pinned, updated_at, phase, round_no, active_seat_id, final_decision_maker_seat_id, used_tokens, used_cost, phase_used_tokens, phase_used_cost, elapsed_seconds, phase_elapsed_seconds, pending_research_responses, use_budget_overrides, budget_override_json, stop_policy_json, seat_usage_json, pending_seats_json, attachments_json, queued_input_ids_json, current_artifact_version_id, paused_resume_phase, continuation_pending, continuation_limit_kind, continuation_reason, arbitration_satisfied, log_visible, seats_json FROM meeting_tables")) {
         qWarning().noquote() << QString("Database load failed: meeting_tables error=%1").arg(query.lastError().text());
         return tables;
     }
+    tableRestoreMs += restoreTimer.elapsed();
     while (query.next()) {
+        restoreTimer.restart();
         SessionState state;
         state.tableId = query.value(0).toString();
         state.title = query.value(1).toString();
@@ -400,9 +420,16 @@ QVector<SessionState> DatabaseManager::loadTables()
         for (const auto &seatValue : seatArray) {
             state.seats.append(seatFromJson(seatValue.toObject()));
         }
+        tableRestoreMs += restoreTimer.elapsed();
+        restoreTimer.restart();
         loadTranscript(state);
+        transcriptRestoreMs += restoreTimer.elapsed();
+        restoreTimer.restart();
         loadLog(state);
+        logRestoreMs += restoreTimer.elapsed();
+        restoreTimer.restart();
         loadArtifacts(state);
+        artifactRestoreMs += restoreTimer.elapsed();
         PersistedChildIds childIds;
         for (const auto &entry : state.transcript) {
             childIds.transcript.insert(entry.entryId);
@@ -427,6 +454,11 @@ QVector<SessionState> DatabaseManager::loadTables()
                                       QString::number(rowCount("artifact_versions")),
                                       QString::number(rowCount("log_events")));
     }
+    auto &startup = StartupTimeline::instance();
+    startup.mark(StartupStage::TableRestoration, tableRestoreMs);
+    startup.mark(StartupStage::TranscriptRestoration, transcriptRestoreMs);
+    startup.mark(StartupStage::LogRestoration, logRestoreMs);
+    startup.mark(StartupStage::ArtifactRestoration, artifactRestoreMs);
     return tables;
 }
 

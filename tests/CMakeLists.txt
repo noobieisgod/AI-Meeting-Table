@@ -3,6 +3,7 @@ set(AMT_TEST_CORE_SOURCES
     ${PROJECT_SOURCE_DIR}/src/app/mobile_app_controller.cpp
     ${PROJECT_SOURCE_DIR}/src/core/event_bus.cpp
     ${PROJECT_SOURCE_DIR}/src/core/logging.cpp
+    ${PROJECT_SOURCE_DIR}/src/core/startup_timeline.cpp
     ${PROJECT_SOURCE_DIR}/src/core/response_parser.cpp
     ${PROJECT_SOURCE_DIR}/src/core/session_runner.cpp
     ${PROJECT_SOURCE_DIR}/src/core/workflow_engine.cpp
@@ -42,6 +43,7 @@ add_amt_test(test_async test_async.cpp)
 add_amt_test(test_model_catalog test_model_catalog.cpp)
 add_amt_test(test_controller test_controller.cpp)
 add_amt_test(test_provider_gateway test_provider_gateway.cpp)
+add_amt_test(test_startup_timeline test_startup_timeline.cpp)
 
 find_package(Java REQUIRED COMPONENTS Runtime Development)
 set(AMT_ATTACHMENT_JAVA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/attachment-java-test-classes")

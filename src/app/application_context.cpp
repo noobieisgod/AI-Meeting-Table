@@ -11,6 +11,7 @@
 #include <QUuid>
 
 #include "core/logging.h"
+#include "core/startup_timeline.h"
 
 #ifdef QT_WIDGETS_LIB
 #include <QApplication>
@@ -30,6 +31,7 @@ ApplicationContext::ApplicationContext(QObject *parent)
                       this)
 {
     m_providerGateway.setCredentialStore(&m_credentialStore);
+    StartupTimeline::instance().mark(StartupStage::ApplicationContextConstruction);
 }
 
 bool ApplicationContext::initialize()

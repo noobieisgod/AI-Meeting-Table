@@ -12,10 +12,12 @@
 #include <QJsonDocument>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QUuid>
 
 #include "core/logging.h"
+#include "core/startup_timeline.h"
 
 namespace amt {
 
@@ -163,11 +165,15 @@ bool MobileAppController::initialize()
         << QString("Persistence restore: saved selection exists=%1")
                .arg((!m_currentTableId.isEmpty() && m_context.tableHandle(m_currentTableId)) ? "true" : "false");
     selectFirstTableIfNeeded();
+    QElapsedTimer snapshotTimer;
+    snapshotTimer.start();
     for (const auto &table : m_context.tables()) {
         if (table) {
             m_uiSnapshots.insert(table->tableId, uiSnapshot(*table));
         }
     }
+    StartupTimeline::instance().mark(StartupStage::ControllerSnapshotConstruction,
+                                     snapshotTimer.elapsed());
     m_initialized = true;
     if (const auto *state = currentState()) {
         qCDebug(diagnosticsLog).noquote() << QString("Persistence restore: selected transcript=%1 artifacts=%2 logs=%3")
@@ -186,6 +192,26 @@ bool MobileAppController::initialize()
     emit artifactsChanged();
     emit logsChanged();
     return true;
+}
+
+void MobileAppController::startupInitialRefreshStarted()
+{
+    StartupTimeline::instance().beginInitialRefresh();
+}
+
+void MobileAppController::startupInitialRefreshCompleted()
+{
+    StartupTimeline::instance().completeInitialRefresh();
+}
+
+void MobileAppController::startupTranscriptVisualStable()
+{
+    StartupTimeline::instance().markTranscriptVisualStable();
+}
+
+void MobileAppController::startupPrimaryControlsReady()
+{
+    StartupTimeline::instance().markPrimaryControlsReady();
 }
 
 QVariantList MobileAppController::tables() const

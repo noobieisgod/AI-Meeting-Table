@@ -28,6 +28,8 @@ qt_add_executable(AIMeetingTable
     src/core/event_bus.cpp
     src/core/logging.h
     src/core/logging.cpp
+    src/core/startup_timeline.h
+    src/core/startup_timeline.cpp
     src/core/response_parser.h
     src/core/response_parser.cpp
     src/core/workflow_engine.h
