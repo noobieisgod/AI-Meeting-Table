@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Meeting Table | Phase 3 GUI concepts</title>
+  <link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">AI Meeting Table · Phase 3</p>
+      <h1>Three interaction directions</h1>
+      <p class="intro">Standalone, fake-data prototypes for selecting a visual and interaction direction before QML work begins.</p>
+    </header>
+    <section class="concepts" aria-label="Concept choices">
+      <article>
+        <p class="label">Concept A</p><h2>Calm Workspace</h2>
+        <p>A guided, generous workspace that reduces cognitive load before and after a meeting.</p>
+        <a class="button" href="concept-a/index.html">Open Calm Workspace</a>
+      </article>
+      <article>
+        <p class="label">Concept B</p><h2>Live Session</h2>
+        <p>A transcript-first operational console where active meeting state is always in view.</p>
+        <a class="button" href="concept-b/index.html">Open Live Session</a>
+      </article>
+      <article>
+        <p class="label">Concept C</p><h2>Meeting Table</h2>
+        <p>A spatial meeting surface that makes the product’s seat-based collaboration model distinctive.</p>
+        <a class="button" href="concept-c/index.html">Open Meeting Table</a>
+      </article>
+    </section>
+    <section class="comparison" aria-labelledby="compare-title">
+      <h2 id="compare-title">At a glance</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Concept</th><th>Information architecture</th><th>Visual character</th><th>Density</th><th>Navigation</th><th>Strongest use case</th><th>QML complexity</th></tr></thead>
+        <tbody>
+          <tr><th>Calm Workspace</th><td>Guided steps</td><td>Quiet, editorial</td><td>Low to medium</td><td>Bottom steps</td><td>First use and review</td><td>Low</td></tr>
+          <tr><th>Live Session</th><td>Transcript-first operations</td><td>Precise, utilitarian</td><td>High</td><td>Rail and workspace tabs</td><td>Active sessions</td><td>Medium</td></tr>
+          <tr><th>Meeting Table</th><td>Shared spatial surface</td><td>Distinctive, grounded</td><td>Medium</td><td>Table regions and drawer</td><td>Branded collaboration</td><td>Medium to high</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+  <script src="launcher.js"></script>
+</body>
+</html>
