@@ -9,6 +9,7 @@ set(AMT_TEST_CORE_SOURCES
     ${PROJECT_SOURCE_DIR}/src/persistence/database_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/providers/provider_gateway.cpp
     ${PROJECT_SOURCE_DIR}/src/services/artifact_manager.cpp
+    ${PROJECT_SOURCE_DIR}/src/services/attachment_import_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/services/budget_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/services/credential_store.cpp
     ${PROJECT_SOURCE_DIR}/src/services/model_catalog_manager.cpp
@@ -16,6 +17,7 @@ set(AMT_TEST_CORE_SOURCES
 )
 
 add_library(AIMeetingTableTestCore STATIC ${AMT_TEST_CORE_SOURCES})
+target_compile_definitions(AIMeetingTableTestCore PUBLIC AMT_TESTING)
 target_include_directories(AIMeetingTableTestCore PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(AIMeetingTableTestCore PUBLIC
     Qt6::Core
@@ -39,6 +41,20 @@ add_amt_test(test_database test_database.cpp)
 add_amt_test(test_async test_async.cpp)
 add_amt_test(test_model_catalog test_model_catalog.cpp)
 add_amt_test(test_controller test_controller.cpp)
+
+find_package(Java REQUIRED COMPONENTS Runtime Development)
+set(AMT_ATTACHMENT_JAVA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/attachment-java-test-classes")
+add_test(
+    NAME test_attachment_import_java
+    COMMAND ${CMAKE_COMMAND}
+        "-DJAVAC=${Java_JAVAC_EXECUTABLE}"
+        "-DJAVA=${Java_JAVA_EXECUTABLE}"
+        "-DPRODUCTION_SOURCE=${PROJECT_SOURCE_DIR}/android/src/com/aimeetingtable/mobile/BoundedStreamCopier.java"
+        "-DTEST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/java/com/aimeetingtable/mobile/BoundedStreamCopierTest.java"
+        "-DOUTPUT_DIR=${AMT_ATTACHMENT_JAVA_OUTPUT}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/run_attachment_import_java_tests.cmake
+)
+set_tests_properties(test_attachment_import_java PROPERTIES TIMEOUT 120)
 
 add_executable(test_qml test_qml.cpp)
 target_link_libraries(test_qml PRIVATE Qt6::QuickTest)

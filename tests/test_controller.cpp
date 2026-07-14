@@ -1,7 +1,12 @@
 #include <QtTest>
 
+#include <algorithm>
+
+#include <QDateTime>
 #include <QDir>
+#include <QCryptographicHash>
 #include <QFile>
+#include <QFileInfo>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -21,6 +26,10 @@ private slots:
   void fullTranscriptTextPreservesOrderAndMetadata();
   void budgetValidationRejectsInvalidRelationships();
   void attachmentCleanupIsReferenceAndPathSafe();
+  void attachmentMetadataAddedOnlyAfterSuccess();
+  void tableDeletionDuringImportRemovesCompletedResult();
+  void staleAttachmentCompletionIsIgnored();
+  void startupCleanupPreservesOwnedAttachments();
 };
 
 void ControllerTests::initTestCase() {
@@ -144,6 +153,168 @@ void ControllerTests::attachmentCleanupIsReferenceAndPathSafe() {
   }
   QVERIFY(!context.cleanupAttachmentFileIfUnreferenced(externalPath));
   QVERIFY(QFile::exists(externalPath));
+}
+
+void ControllerTests::attachmentMetadataAddedOnlyAfterSuccess() {
+  MobileAppController controller;
+  QVERIFY(controller.initialize());
+  QVERIFY(controller.createTable("Async attachment", 1));
+  const QString tableId = controller.currentTableId();
+  const auto handle = controller.m_context.tableHandle(tableId);
+  QVERIFY(handle);
+  const qsizetype initialCount = handle->attachments.size();
+
+  QTemporaryDir sourceDirectory;
+  QVERIFY(sourceDirectory.isValid());
+  const QString sourcePath = sourceDirectory.filePath("small-benign.txt");
+  const QByteArray content("bounded attachment content");
+  {
+    QFile source(sourcePath);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    QCOMPARE(source.write(content), qint64(content.size()));
+  }
+
+  QSignalSpy importChanged(&controller,
+                           &MobileAppController::attachmentImportChanged);
+  QVERIFY(controller.addAttachment(QUrl::fromLocalFile(sourcePath)));
+  QVERIFY(controller.attachmentImportInProgress());
+  QCOMPARE(handle->attachments.size(), initialCount);
+  QVERIFY(!controller.addAttachment(QUrl::fromLocalFile(sourcePath)));
+  QVERIFY(controller.lastError().contains("already in progress"));
+
+  QTRY_VERIFY_WITH_TIMEOUT(!controller.attachmentImportInProgress(), 5000);
+  QVERIFY(importChanged.count() >= 2);
+  QCOMPARE(handle->attachments.size(), initialCount + 1);
+  const AttachmentRecord imported = handle->attachments.last();
+  QCOMPARE(imported.fileHash,
+           QString::fromLatin1(
+               QCryptographicHash::hash(content, QCryptographicHash::Sha256)
+                   .toHex()));
+  QCOMPARE(QFileInfo(imported.filePath).size(), qint64(content.size()));
+  QCOMPARE(controller.attachments().size(), initialCount + 1);
+  QVERIFY(controller.removeAttachment(imported.attachmentId));
+  QVERIFY(!QFile::exists(imported.filePath));
+  QVERIFY(QFile::exists(sourcePath));
+}
+
+void ControllerTests::tableDeletionDuringImportRemovesCompletedResult() {
+  MobileAppController controller;
+  QVERIFY(controller.initialize());
+  QVERIFY(controller.createTable("Delete during import", 1));
+  const QString tableId = controller.currentTableId();
+  const QString attachmentRoot =
+      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+      "/attachments";
+  QVERIFY(QDir().mkpath(attachmentRoot));
+  const QString completedPath = attachmentRoot + "/deleted-table-result.txt";
+  {
+    QFile file(completedPath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("result"), qint64(6));
+  }
+
+  controller.m_attachmentImportOperationId = "delete-operation";
+  controller.m_attachmentImportTableId = tableId;
+  controller.m_attachmentImportInProgress = true;
+  QVERIFY(controller.deleteCurrentTable());
+  QVERIFY(!controller.m_context.tableHandle(tableId));
+
+  AttachmentImportResult result;
+  result.operationId = "delete-operation";
+  result.status = AttachmentImportStatus::Success;
+  result.finalPath = completedPath;
+  result.byteCount = 6;
+  result.sha256 = QString(64, 'a');
+  controller.handleAttachmentImportFinished(result);
+  QVERIFY(!QFile::exists(completedPath));
+  QVERIFY(!controller.attachmentImportInProgress());
+}
+
+void ControllerTests::staleAttachmentCompletionIsIgnored() {
+  MobileAppController controller;
+  QVERIFY(controller.initialize());
+  if (controller.currentTableId().isEmpty()) {
+    QVERIFY(controller.createTable("Stale import", 1));
+  }
+  const auto handle = controller.m_context.tableHandle(controller.currentTableId());
+  QVERIFY(handle);
+  const qsizetype initialCount = handle->attachments.size();
+
+  const QString attachmentRoot =
+      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+      "/attachments";
+  QVERIFY(QDir().mkpath(attachmentRoot));
+  const QString stalePath = attachmentRoot + "/stale-result.txt";
+  {
+    QFile file(stalePath);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("stale"), qint64(5));
+  }
+
+  controller.m_attachmentImportOperationId = "active-operation";
+  controller.m_attachmentImportTableId = controller.currentTableId();
+  controller.m_attachmentImportInProgress = true;
+  AttachmentImportResult stale;
+  stale.operationId = "stale-operation";
+  stale.status = AttachmentImportStatus::Success;
+  stale.finalPath = stalePath;
+  stale.byteCount = 5;
+  stale.sha256 = QString(64, 'b');
+  controller.handleAttachmentImportFinished(stale);
+
+  QVERIFY(!QFile::exists(stalePath));
+  QVERIFY(controller.attachmentImportInProgress());
+  QCOMPARE(handle->attachments.size(), initialCount);
+  controller.m_attachmentImportOperationId.clear();
+  controller.m_attachmentImportTableId.clear();
+  controller.m_attachmentImportInProgress = false;
+}
+
+void ControllerTests::startupCleanupPreservesOwnedAttachments() {
+  ApplicationContext context;
+  QVERIFY(context.initialize());
+  QVERIFY(!context.tables().isEmpty());
+  auto table = context.tables().first();
+  const QString attachmentRoot =
+      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+      "/attachments";
+  QVERIFY(QDir().mkpath(attachmentRoot));
+
+  const QString ownedPath = attachmentRoot + "/owned-existing.txt";
+  const QString orphanPath = attachmentRoot + "/completed-unowned.txt";
+  const QString partialPath = attachmentRoot + "/interrupted.part";
+  for (const QString &path : {ownedPath, orphanPath, partialPath}) {
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("data"), qint64(4));
+  }
+
+  AttachmentRecord owned;
+  owned.attachmentId = "owned-existing";
+  owned.displayName = "owned-existing.txt";
+  owned.filePath = ownedPath;
+  owned.fileHash = QString(64, 'c');
+  owned.addedAt = QDateTime::currentDateTimeUtc();
+  table->attachments.append(owned);
+  QVERIFY(context.save(*table));
+
+  ApplicationContext restored;
+  QVERIFY(restored.initialize());
+  QVERIFY(QFile::exists(ownedPath));
+  QVERIFY(!QFile::exists(orphanPath));
+  QVERIFY(!QFile::exists(partialPath));
+
+  const auto restoredTable = restored.tableHandle(table->tableId);
+  QVERIFY(restoredTable);
+  restoredTable->attachments.erase(
+      std::remove_if(restoredTable->attachments.begin(),
+                     restoredTable->attachments.end(),
+                     [](const AttachmentRecord &attachment) {
+                       return attachment.attachmentId == "owned-existing";
+                     }),
+      restoredTable->attachments.end());
+  QVERIFY(restored.save(*restoredTable));
+  QVERIFY(restored.cleanupAttachmentFileIfUnreferenced(ownedPath));
 }
 
 QTEST_GUILESS_MAIN(ControllerTests)

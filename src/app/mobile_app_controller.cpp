@@ -10,18 +10,12 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
-#include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
 
 #include "core/logging.h"
-
-#ifdef Q_OS_ANDROID
-#include <QJniObject>
-#include <QtCore/qcoreapplication_platform.h>
-#endif
 
 namespace amt {
 
@@ -81,15 +75,27 @@ QString logEventTypeLabel(LogEventType type)
     return "Log";
 }
 
-QString sanitizedFileName(QString value)
+QString attachmentImportErrorMessage(AttachmentImportStatus status)
 {
-    value = value.trimmed();
-    if (value.isEmpty()) {
-        value = "attachment";
+    switch (status) {
+    case AttachmentImportStatus::TooLarge:
+        return "Attachments must be 25 MiB or smaller.";
+    case AttachmentImportStatus::InsufficientStorage:
+        return "Not enough storage is available to import this attachment safely.";
+    case AttachmentImportStatus::ProviderFailure:
+        return "The selected attachment could not be read.";
+    case AttachmentImportStatus::DestinationFailure:
+    case AttachmentImportStatus::HashFailure:
+    case AttachmentImportStatus::RenameFailure:
+        return "The attachment could not be saved to app storage.";
+    case AttachmentImportStatus::Timeout:
+        return "Attachment import timed out because no data was received.";
+    case AttachmentImportStatus::Cancelled:
+        return "Attachment import was cancelled.";
+    case AttachmentImportStatus::Success:
+        return {};
     }
-    static const QRegularExpression invalid(R"([\\/:*?"<>|])");
-    value.replace(invalid, "_");
-    return value;
+    return "Attachment import failed.";
 }
 
 } // namespace
@@ -110,6 +116,10 @@ MobileAppController::MobileAppController(QObject *parent)
     connect(m_context.modelCatalogManager(), &ModelCatalogManager::fetchCompleted, this, [this]() {
         emit settingsChanged();
     });
+    connect(&m_attachmentImportManager,
+            &AttachmentImportManager::importFinished,
+            this,
+            &MobileAppController::handleAttachmentImportFinished);
 }
 
 bool MobileAppController::initialized() const
@@ -126,6 +136,16 @@ bool MobileAppController::running() const
 QString MobileAppController::currentTableId() const
 {
     return m_currentTableId;
+}
+
+bool MobileAppController::attachmentImportInProgress() const
+{
+    return m_attachmentImportInProgress;
+}
+
+QString MobileAppController::attachmentImportStatus() const
+{
+    return m_attachmentImportStatus;
 }
 
 bool MobileAppController::initialize()
@@ -162,6 +182,7 @@ bool MobileAppController::initialize()
     emit stateChanged();
     emit seatsChanged();
     emit transcriptChanged();
+    emit attachmentsChanged();
     emit artifactsChanged();
     emit logsChanged();
     return true;
@@ -225,6 +246,19 @@ QVariantList MobileAppController::transcript() const
     }
     for (const auto &entry : state->transcript) {
         rows.append(transcriptSummary(entry));
+    }
+    return rows;
+}
+
+QVariantList MobileAppController::attachments() const
+{
+    QVariantList rows;
+    const auto *state = currentState();
+    if (!state) {
+        return rows;
+    }
+    for (const auto &attachment : state->attachments) {
+        rows.append(attachmentSummary(attachment));
     }
     return rows;
 }
@@ -376,6 +410,7 @@ void MobileAppController::selectTable(const QString &tableId)
     emit tablesChanged();
     emit seatsChanged();
     emit transcriptChanged();
+    emit attachmentsChanged();
     emit artifactsChanged();
     emit logsChanged();
 }
@@ -465,6 +500,12 @@ bool MobileAppController::deleteCurrentTable()
     if (tableId.isEmpty()) {
         return false;
     }
+    if (m_attachmentImportInProgress && m_attachmentImportTableId == tableId) {
+        m_suppressAttachmentCancellationError = true;
+        m_attachmentImportStatus = "Cancelling attachment import...";
+        m_attachmentImportManager.cancelActive();
+        emit attachmentImportChanged();
+    }
     m_context.sessionRunner()->discardSession(tableId);
     if (!m_context.removeTable(tableId)) {
         setError("The table could not be deleted.");
@@ -478,6 +519,7 @@ bool MobileAppController::deleteCurrentTable()
     emit stateChanged();
     emit seatsChanged();
     emit transcriptChanged();
+    emit attachmentsChanged();
     emit artifactsChanged();
     emit logsChanged();
     return true;
@@ -631,29 +673,41 @@ bool MobileAppController::addAttachment(const QUrl &url)
 {
     auto *state = currentState();
     if (!state) {
+        setError("No table is selected.");
         return false;
     }
-    QString error;
-    const QString filePath = importAttachmentToPrivateStorage(url, &error);
-    if (filePath.isEmpty()) {
-        setError(error.isEmpty() ? "Attachment import failed." : error);
+    if (m_attachmentImportInProgress) {
+        setError("An attachment import is already in progress.");
         return false;
     }
-    AttachmentRecord attachment = m_context.uploadManager()->createAttachment(filePath, &error);
-    if (attachment.attachmentId.isEmpty()) {
-        m_context.cleanupAttachmentFileIfUnreferenced(filePath);
-        setError(error);
+
+    const QString operationId = m_attachmentImportManager.startImport(
+        state->tableId, url, attachmentImportRoot());
+    if (operationId.isEmpty()) {
+        setError("Attachment import could not be started.");
         return false;
     }
-    SessionState candidate = *state;
-    candidate.attachments.append(attachment);
-    if (isRunningPhase(candidate.phase) || candidate.waitingForNextTurn) {
-        candidate.queuedInputIds.append(attachment.attachmentId);
-    }
-    if (!saveAndNotify(candidate)) {
-        m_context.cleanupAttachmentFileIfUnreferenced(filePath);
+
+    m_attachmentImportOperationId = operationId;
+    m_attachmentImportTableId = state->tableId;
+    m_attachmentImportStatus = "Importing attachment...";
+    m_attachmentImportInProgress = true;
+    m_suppressAttachmentCancellationError = false;
+    setError({});
+    emit attachmentImportChanged();
+    return true;
+}
+
+bool MobileAppController::cancelAttachmentImport()
+{
+    if (!m_attachmentImportInProgress) {
         return false;
     }
+    if (!m_attachmentImportManager.cancelActive()) {
+        return false;
+    }
+    m_attachmentImportStatus = "Cancelling attachment import...";
+    emit attachmentImportChanged();
     return true;
 }
 
@@ -901,6 +955,9 @@ void MobileAppController::notifyStateChange(const SessionState &state, bool tabl
     if (previous.transcriptCount != current.transcriptCount) {
         emit transcriptChanged();
     }
+    if (previous.attachmentCount != current.attachmentCount) {
+        emit attachmentsChanged();
+    }
     if (previous.artifactCount != current.artifactCount) {
         emit artifactsChanged();
     }
@@ -913,6 +970,7 @@ MobileAppController::UiSnapshot MobileAppController::uiSnapshot(const SessionSta
 {
     UiSnapshot snapshot;
     snapshot.transcriptCount = state.transcript.size();
+    snapshot.attachmentCount = state.attachments.size();
     snapshot.artifactCount = state.artifacts.size();
     snapshot.logCount = state.log.size();
     snapshot.activeSeatId = state.activeSeatId;
@@ -1017,6 +1075,14 @@ QVariantMap MobileAppController::transcriptSummary(const TranscriptEntry &entry)
     return row;
 }
 
+QVariantMap MobileAppController::attachmentSummary(const AttachmentRecord &attachment) const
+{
+    QVariantMap row;
+    row.insert("attachmentId", attachment.attachmentId);
+    row.insert("displayName", attachment.displayName);
+    return row;
+}
+
 QVariantMap MobileAppController::artifactSummary(const ArtifactVersion &artifact) const
 {
     QVariantMap row;
@@ -1042,49 +1108,60 @@ QVariantMap MobileAppController::logSummary(const LogEvent &event) const
     return row;
 }
 
-QString MobileAppController::importAttachmentToPrivateStorage(const QUrl &url, QString *error) const
+void MobileAppController::handleAttachmentImportFinished(const AttachmentImportResult &result)
 {
-    const QString root = attachmentImportRoot();
-    QDir().mkpath(root);
+    if (result.operationId != m_attachmentImportOperationId) {
+        if (!result.finalPath.isEmpty()) {
+            m_context.cleanupAttachmentFileIfUnreferenced(result.finalPath);
+        }
+        return;
+    }
 
-#ifdef Q_OS_ANDROID
-    if (url.scheme() == "content") {
-        const QJniObject context = QNativeInterface::QAndroidApplication::context();
-        const QJniObject uri = QJniObject::fromString(url.toString());
-        const QJniObject target = QJniObject::fromString(root);
-        const QJniObject imported = QJniObject::callStaticObjectMethod(
-            "com/aimeetingtable/mobile/FileBridge",
-            "importUriToPrivateFile",
-            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-            context.object<jobject>(),
-            uri.object<jstring>(),
-            target.object<jstring>());
-        const QString path = imported.toString();
-        if (path.isEmpty() && error) {
-            *error = "Android content import failed.";
-        }
-        return path;
-    }
-#endif
+    const QString targetTableId = m_attachmentImportTableId;
+    const bool suppressCancellationError = m_suppressAttachmentCancellationError;
+    m_attachmentImportOperationId.clear();
+    m_attachmentImportTableId.clear();
+    m_attachmentImportStatus.clear();
+    m_attachmentImportInProgress = false;
+    m_suppressAttachmentCancellationError = false;
+    emit attachmentImportChanged();
 
-    const QString sourcePath = url.isLocalFile() ? url.toLocalFile() : url.toString();
-    QFileInfo sourceInfo(sourcePath);
-    if (!sourceInfo.exists() || !sourceInfo.isFile()) {
-        if (error) {
-            *error = "The selected attachment is not a readable local file.";
+    if (!result.succeeded()) {
+        if (!(suppressCancellationError && result.status == AttachmentImportStatus::Cancelled)) {
+            setError(attachmentImportErrorMessage(result.status));
+            emit attachmentImportFailed();
         }
-        return {};
+        return;
     }
-    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const QString targetPath = root + "/" + id + "-" + sanitizedFileName(sourceInfo.fileName());
-    if (!QFile::copy(sourceInfo.absoluteFilePath(), targetPath)) {
-        QFile::remove(targetPath);
-        if (error) {
-            *error = "Failed to copy attachment into app storage.";
-        }
-        return {};
+
+    const auto handle = m_context.tableHandle(targetTableId);
+    if (!handle) {
+        m_context.cleanupAttachmentFileIfUnreferenced(result.finalPath);
+        return;
     }
-    return targetPath;
+
+    QString verificationError;
+    AttachmentRecord attachment = m_context.uploadManager()->createAttachment(
+        result.finalPath, result.sha256, result.byteCount, &verificationError);
+    if (attachment.attachmentId.isEmpty()) {
+        m_context.cleanupAttachmentFileIfUnreferenced(result.finalPath);
+        setError("The imported attachment could not be verified.");
+        emit attachmentImportFailed();
+        return;
+    }
+
+    SessionState candidate = *handle;
+    candidate.attachments.append(attachment);
+    if (isRunningPhase(candidate.phase) || candidate.waitingForNextTurn) {
+        candidate.queuedInputIds.append(attachment.attachmentId);
+    }
+    if (!saveAndNotify(candidate, true)) {
+        m_context.cleanupAttachmentFileIfUnreferenced(result.finalPath);
+        setError("The imported attachment could not be saved.");
+        emit attachmentImportFailed();
+        return;
+    }
+    setError({});
 }
 
 void MobileAppController::setError(const QString &error) const

@@ -23,6 +23,7 @@ ApplicationWindow {
     property var currentTable: ({})
     property var seatRows: []
     property var transcriptRows: []
+    property var attachmentRows: []
     property var artifactRows: []
     property var logRows: []
     property var modelRefreshRows: []
@@ -93,6 +94,10 @@ ApplicationWindow {
         root.artifactRows = root.appController.artifacts();
     }
 
+    function refreshAttachments() {
+        root.attachmentRows = root.appController.attachments();
+    }
+
     function refreshLogs() {
         root.logRows = root.appController.logs();
     }
@@ -106,6 +111,7 @@ ApplicationWindow {
         root.refreshCurrentTable();
         root.refreshSeats();
         root.refreshTranscript();
+        root.refreshAttachments();
         root.refreshArtifacts();
         root.refreshLogs();
         root.refreshSettings();
@@ -181,6 +187,9 @@ ApplicationWindow {
         function onTranscriptChanged() {
             root.refreshTranscript();
         }
+        function onAttachmentsChanged() {
+            root.refreshAttachments();
+        }
         function onArtifactsChanged() {
             root.refreshArtifacts();
         }
@@ -189,6 +198,9 @@ ApplicationWindow {
         }
         function onSettingsChanged() {
             root.refreshSettings();
+        }
+        function onAttachmentImportFailed() {
+            root.showErrorIfNeeded();
         }
         function onContinuationRequested(reason) {
             continuationDialog.text = reason;
@@ -641,45 +653,114 @@ ApplicationWindow {
                     anchors.leftMargin: 12
                     anchors.rightMargin: 12
                     anchors.bottomMargin: 12
-                    RowLayout {
+                    implicitHeight: composerLayout.implicitHeight + topPadding + bottomPadding
+                    ColumnLayout {
+                        id: composerLayout
                         anchors.fill: parent
-                        ToolButton {
-                            text: "+"
-                            Accessible.name: "Add attachment"
-                            onClicked: attachmentDialog.open()
-                        }
-                        Rectangle {
+                        spacing: 6
+
+                        Flow {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 82
-                            radius: 8
-                            color: "#ffffff"
-                            border.color: "#9ca3af"
-                            border.width: 1
-                            clip: true
-                            ScrollView {
-                                id: composerScroll
-                                anchors.fill: parent
-                                anchors.margins: 2
-                                clip: true
-                                TextArea {
-                                    id: composer
-                                    width: composerScroll.availableWidth
-                                    placeholderText: "Message"
-                                    placeholderTextColor: "#6b7280"
-                                    color: "#111827"
-                                    wrapMode: Text.Wrap
-                                    background: null
+                            Layout.preferredHeight: visible ? childrenRect.height : 0
+                            visible: root.attachmentRows.length > 0
+                            spacing: 6
+
+                            Repeater {
+                                model: root.attachmentRows
+                                delegate: Rectangle {
+                                    id: attachmentChip
+                                    required property var modelData
+
+                                    width: Math.min(composerPane.width - 16, chipRow.implicitWidth + 16)
+                                    height: 32
+                                    radius: 8
+                                    color: "#eef2ff"
+                                    border.color: "#c7d2fe"
+
+                                    RowLayout {
+                                        id: chipRow
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        spacing: 4
+                                        Label {
+                                            text: attachmentChip.modelData.displayName
+                                            elide: Text.ElideMiddle
+                                            Layout.maximumWidth: 220
+                                            Accessible.name: "Attachment " + attachmentChip.modelData.displayName
+                                        }
+                                        ToolButton {
+                                            text: "×"
+                                            Accessible.name: "Remove attachment " + attachmentChip.modelData.displayName
+                                            onClicked: {
+                                                if (!root.appController.removeAttachment(attachmentChip.modelData.attachmentId))
+                                                    root.showErrorIfNeeded();
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        Button {
-                            text: "Send"
-                            onClicked: {
-                                if (root.appController.sendMessage(composer.text)) {
-                                    composer.clear();
-                                    root.hideKeyboardAfterSend();
-                                } else {
-                                    root.showErrorIfNeeded();
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ToolButton {
+                                text: root.appController.attachmentImportInProgress ? "Cancel" : "+"
+                                enabled: root.appController.attachmentImportStatus !== "Cancelling attachment import..."
+                                Accessible.name: root.appController.attachmentImportInProgress
+                                    ? "Cancel attachment import"
+                                    : "Add attachment"
+                                onClicked: {
+                                    if (root.appController.attachmentImportInProgress)
+                                        root.appController.cancelAttachmentImport();
+                                    else
+                                        attachmentDialog.open();
+                                }
+                            }
+                            BusyIndicator {
+                                running: root.appController.attachmentImportInProgress
+                                visible: running
+                                Layout.preferredWidth: 28
+                                Layout.preferredHeight: 28
+                            }
+                            Label {
+                                visible: root.appController.attachmentImportInProgress
+                                text: root.appController.attachmentImportStatus
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 180
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 82
+                                radius: 8
+                                color: "#ffffff"
+                                border.color: "#9ca3af"
+                                border.width: 1
+                                clip: true
+                                ScrollView {
+                                    id: composerScroll
+                                    anchors.fill: parent
+                                    anchors.margins: 2
+                                    clip: true
+                                    TextArea {
+                                        id: composer
+                                        width: composerScroll.availableWidth
+                                        placeholderText: "Message"
+                                        placeholderTextColor: "#6b7280"
+                                        color: "#111827"
+                                        wrapMode: Text.Wrap
+                                        background: null
+                                    }
+                                }
+                            }
+                            Button {
+                                text: "Send"
+                                onClicked: {
+                                    if (root.appController.sendMessage(composer.text)) {
+                                        composer.clear();
+                                        root.hideKeyboardAfterSend();
+                                    } else {
+                                        root.showErrorIfNeeded();
+                                    }
                                 }
                             }
                         }

@@ -43,6 +43,8 @@ qt_add_executable(AIMeetingTable
     src/services/credential_store.cpp
     src/services/artifact_manager.h
     src/services/artifact_manager.cpp
+    src/services/attachment_import_manager.h
+    src/services/attachment_import_manager.cpp
     src/services/budget_manager.h
     src/services/budget_manager.cpp
     src/services/model_catalog_manager.h

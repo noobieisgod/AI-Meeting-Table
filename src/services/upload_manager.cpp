@@ -3,6 +3,7 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QUuid>
 
 namespace amt {
@@ -14,18 +15,34 @@ UploadManager::UploadManager(QObject *parent)
 
 AttachmentRecord UploadManager::createAttachment(const QString &filePath, QString *error) const
 {
+    const QFileInfo info(filePath);
+    const QString hash = computeFileHash(info.absoluteFilePath(), error);
+    if (hash.isEmpty()) {
+        return {};
+    }
+    return createAttachment(info.absoluteFilePath(), hash, info.size(), error);
+}
+
+AttachmentRecord UploadManager::createAttachment(const QString &filePath,
+                                                  const QString &sha256,
+                                                  qint64 byteCount,
+                                                  QString *error) const
+{
+    const QFileInfo info(filePath);
+    static const QRegularExpression sha256Pattern(QStringLiteral("^[0-9a-f]{64}$"));
+    if (!info.exists() || !info.isFile() || byteCount < 0 || info.size() != byteCount
+        || !sha256Pattern.match(sha256).hasMatch()) {
+        if (error) {
+            *error = "Imported attachment verification failed.";
+        }
+        return {};
+    }
+
     AttachmentRecord attachment;
-    QFileInfo info(filePath);
     attachment.attachmentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     attachment.displayName = info.fileName();
     attachment.filePath = info.absoluteFilePath();
-    attachment.fileHash = computeFileHash(attachment.filePath, error);
-    if (attachment.fileHash.isEmpty()) {
-        attachment.attachmentId.clear();
-        attachment.filePath.clear();
-        attachment.displayName.clear();
-        return attachment;
-    }
+    attachment.fileHash = sha256;
     attachment.addedAt = QDateTime::currentDateTimeUtc();
     return attachment;
 }

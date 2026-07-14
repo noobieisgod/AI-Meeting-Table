@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUuid>
@@ -58,6 +59,7 @@ bool ApplicationContext::initialize()
             save(*handle);
         }
     }
+    cleanupUnownedAttachmentFiles();
     qCDebug(diagnosticsLog).noquote() << QString("Persistence restore: loaded tables=%1").arg(m_tables.size());
     if (m_tables.isEmpty()) {
         auto sample = std::make_shared<SessionState>(createSampleTable());
@@ -196,6 +198,50 @@ bool ApplicationContext::cleanupAttachmentFileIfUnreferenced(const QString &file
         }
     }
     return QFile::remove(canonicalFilePath);
+}
+
+void ApplicationContext::cleanupUnownedAttachmentFiles() const
+{
+    const QString attachmentRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/attachments";
+    QDir root(attachmentRoot);
+    if (!root.exists()) {
+        return;
+    }
+
+    const QString canonicalRoot = QFileInfo(attachmentRoot).canonicalFilePath();
+    if (canonicalRoot.isEmpty()) {
+        return;
+    }
+
+    QSet<QString> referenced;
+    for (const auto &table : m_tables) {
+        if (!table) {
+            continue;
+        }
+        for (const auto &attachment : table->attachments) {
+            const QString canonicalPath = QFileInfo(attachment.filePath).canonicalFilePath();
+            if (!canonicalPath.isEmpty()) {
+                referenced.insert(canonicalPath);
+            }
+        }
+    }
+
+    int cleanupFailures = 0;
+    const QFileInfoList entries = root.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+    for (const QFileInfo &entry : entries) {
+        const QString canonicalPath = entry.canonicalFilePath();
+        const bool isPartial = entry.fileName().endsWith(".part");
+        const bool isOwned = !canonicalPath.isEmpty() && referenced.contains(canonicalPath);
+        if (!isPartial && isOwned) {
+            continue;
+        }
+        if (!QFile::remove(entry.absoluteFilePath())) {
+            cleanupFailures += 1;
+        }
+    }
+    if (cleanupFailures > 0) {
+        qWarning().noquote() << QString("Attachment startup cleanup failures=%1").arg(cleanupFailures);
+    }
 }
 
 ApplicationContext::SessionHandle ApplicationContext::tableHandle(const QString &tableId) const

@@ -53,6 +53,7 @@ public:
 
 private:
     bool validateRestoredArtifacts(SessionState &state) const;
+    void cleanupUnownedAttachmentFiles() const;
 
     QVector<SessionHandle> m_tables;
     DatabaseManager m_databaseManager;
