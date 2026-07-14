@@ -12,7 +12,8 @@ Verified local Android tooling:
 - Qt: `C:\QtFresh\6.11.1\android_arm64_v8a`
 - Android SDK: `C:\Users\Andy\AppData\Local\Android\Sdk`
 - Android NDK: `C:\Users\Andy\AppData\Local\Android\Sdk\ndk\27.2.12479018`
-- Android platform: `android-36`
+- Android compile platform: `android-36`
+- Android native minimum platform: `android-28`
 - Build tools: `37.0.0`
 
 `JAVA_HOME` is not currently set, but Java is installed at `C:\Program Files\Java\jdk-23`.
@@ -28,6 +29,7 @@ $env:ANDROID_NDK_ROOT = "C:\Users\Andy\AppData\Local\Android\Sdk\ndk\27.2.124790
 C:\QtFresh\6.11.1\android_arm64_v8a\bin\qt-cmake.bat `
   -G Ninja `
   -DCMAKE_BUILD_TYPE=Debug `
+  -DANDROID_PLATFORM=android-28 `
   -S "C:\Users\Andy\Desktop\AI Meeting Table\Mobile Source Code" `
   -B "C:\Users\Andy\Desktop\AI Meeting Table\Mobile Source Code\build-android" `
 ```
@@ -105,6 +107,7 @@ C:\Tmp\aimeetingtable-startup-logcat-fixed-2.txt
 C:\QtFresh\6.11.1\android_arm64_v8a\bin\qt-cmake.bat `
   -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
+  -DANDROID_PLATFORM=android-28 `
   -S "C:\Users\Andy\Desktop\AI Meeting Table\Mobile Source Code" `
   -B "C:\Users\Andy\Desktop\AI Meeting Table\Mobile Source Code\build-android-release"
 
@@ -143,7 +146,7 @@ C:\Users\Andy\Desktop\AI Meeting Table\Mobile Source Code\build-android-release\
 
 Use Qt Creator's Android build settings or the Qt-generated Gradle project to create a signed release AAB. Set:
 - Package id: `com.aimeetingtable.myapp`
-- Min SDK: 26
+- Min SDK: 28
 - Target SDK: 36 on this machine, satisfying the Google Play API 35 or newer requirement
 - ABI: `arm64-v8a`
 - Signing config: release keystore created above

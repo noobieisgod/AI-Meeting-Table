@@ -35,6 +35,8 @@ endif()
 
 file(READ "${SOURCE_DIR}/CMakeLists.txt" cmake_source)
 require_contains("${cmake_source}" "com.aimeetingtable.myapp" "preserved Android application ID")
+require_contains("${cmake_source}" "QT_ANDROID_MIN_SDK_VERSION 28" "Qt Android minimum SDK")
+require_absent("${cmake_source}" "QT_ANDROID_MIN_SDK_VERSION 26" "obsolete Qt Android minimum SDK")
 require_contains("${cmake_source}" "b71f1470962019bd89534a2919f5925f93bc5779" "pinned OpenSSL commit")
 require_contains("${cmake_source}" "SHA256=6c1dfff0af367bba2f2c2a27f1c2061019537524dc7892ee8efbdc8e1c6224fa" "pinned OpenSSL archive hash")
 require_contains("${cmake_source}" "EXCLUDE_BY_TYPE qmltooling" "Release QML tooling exclusion")
