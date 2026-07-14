@@ -1,0 +1,183 @@
+#include <QtTest>
+
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QTemporaryDir>
+#include <QUuid>
+
+#include "persistence/database_manager.h"
+
+using namespace amt;
+
+namespace {
+
+SessionState makeState(int transcriptCount) {
+  SessionState state;
+  state.tableId = "table-1";
+  state.title = "Persistence test";
+  state.updatedAt = QDateTime::currentDateTimeUtc();
+  state.phase = Phase::Research;
+  state.round = 2;
+  const QDateTime timestamp =
+      QDateTime::fromString("2026-01-01T00:00:00Z", Qt::ISODate);
+  for (int i = 0; i < transcriptCount; ++i) {
+    TranscriptEntry entry;
+    entry.entryId = QString("entry-%1").arg(i, 3, 10, QChar('0'));
+    entry.tableId = state.tableId;
+    entry.phase = state.phase;
+    entry.round = state.round;
+    entry.speakerName = "Speaker";
+    entry.content = QString("Content %1").arg(i);
+    entry.timestamp = timestamp;
+    state.transcript.append(entry);
+  }
+  return state;
+}
+
+int scalarInt(QSqlDatabase &database, const QString &sql) {
+  QSqlQuery query(database);
+  if (!query.exec(sql) || !query.next()) {
+    return -1;
+  }
+  return query.value(0).toInt();
+}
+
+} // namespace
+
+class DatabaseTests final : public QObject {
+  Q_OBJECT
+
+private slots:
+  void incrementalDeltaRoundTripAndIndexes();
+  void legacyTranscriptSchemaMigrates();
+};
+
+void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
+  QTemporaryDir temporaryDirectory;
+  QVERIFY(temporaryDirectory.isValid());
+  const QString databasePath = temporaryDirectory.filePath("meeting.db");
+  const QString managerConnection = QUuid::createUuid().toString();
+
+  DatabaseManager manager(databasePath, managerConnection);
+  QVERIFY(manager.initialize());
+
+  SessionState state = makeState(100);
+  LogEvent log;
+  log.logId = "log-1";
+  log.tableId = state.tableId;
+  log.phase = state.phase;
+  log.timestamp = state.transcript.first().timestamp;
+  log.summary = "Test log";
+  state.log.append(log);
+
+  ArtifactVersion artifact;
+  artifact.versionId = "artifact-1";
+  artifact.createdByPhase = state.phase;
+  artifact.createdAt = state.transcript.first().timestamp;
+  artifact.summary = "Test artifact";
+  artifact.filePath = temporaryDirectory.filePath("artifact.md");
+  state.artifacts.append(artifact);
+  state.currentArtifactVersionId = artifact.versionId;
+  QVERIFY(manager.saveTable(state));
+
+  const QString auditConnectionName = QUuid::createUuid().toString();
+  {
+    QSqlDatabase auditDatabase =
+        QSqlDatabase::addDatabase("QSQLITE", auditConnectionName);
+    auditDatabase.setDatabaseName(databasePath);
+    QVERIFY(auditDatabase.open());
+    QSqlQuery query(auditDatabase);
+    QVERIFY(query.exec("CREATE TABLE write_audit (value INTEGER)"));
+    QVERIFY(query.exec(
+        "CREATE TRIGGER count_transcript_insert AFTER INSERT ON "
+        "transcript_entries BEGIN INSERT INTO write_audit VALUES (1); END"));
+
+    TranscriptEntry appended = state.transcript.constLast();
+    appended.entryId = "entry-new";
+    appended.content = "New content";
+    state.transcript.append(appended);
+    QVERIFY(manager.saveTable(state));
+    QCOMPARE(scalarInt(auditDatabase, "SELECT COUNT(*) FROM write_audit"), 1);
+
+    state.transcript.removeFirst();
+    QVERIFY(manager.saveTable(state));
+    QCOMPARE(
+        scalarInt(auditDatabase, "SELECT COUNT(*) FROM transcript_entries"),
+        100);
+    QCOMPARE(scalarInt(auditDatabase, "SELECT COUNT(*) FROM log_events"), 1);
+    QCOMPARE(scalarInt(auditDatabase, "SELECT COUNT(*) FROM artifact_versions"),
+             1);
+
+    const QStringList expectedIndexes = {"idx_artifact_table_created",
+                                         "idx_log_table_timestamp",
+                                         "idx_transcript_table_timestamp"};
+    for (const QString &index : expectedIndexes) {
+      QSqlQuery indexQuery(auditDatabase);
+      indexQuery.prepare(
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?");
+      indexQuery.addBindValue(index);
+      QVERIFY(indexQuery.exec());
+      QVERIFY(indexQuery.next());
+      QCOMPARE(indexQuery.value(0).toInt(), 1);
+    }
+    auditDatabase.close();
+  }
+  QSqlDatabase::removeDatabase(auditConnectionName);
+
+  const QVector<SessionState> restored = manager.loadTables();
+  QCOMPARE(restored.size(), 1);
+  QCOMPARE(restored.first().transcript.size(), 100);
+  QCOMPARE(restored.first().transcript.first().entryId, QString("entry-001"));
+  QCOMPARE(restored.first().transcript.constLast().entryId,
+           QString("entry-new"));
+  QCOMPARE(restored.first().log.first().summary, QString("Test log"));
+  QCOMPARE(restored.first().artifacts.first().versionId, QString("artifact-1"));
+}
+
+void DatabaseTests::legacyTranscriptSchemaMigrates() {
+  QTemporaryDir temporaryDirectory;
+  QVERIFY(temporaryDirectory.isValid());
+  const QString databasePath = temporaryDirectory.filePath("legacy.db");
+  const QString setupConnectionName = QUuid::createUuid().toString();
+  {
+    QSqlDatabase setup =
+        QSqlDatabase::addDatabase("QSQLITE", setupConnectionName);
+    setup.setDatabaseName(databasePath);
+    QVERIFY(setup.open());
+    QSqlQuery query(setup);
+    QVERIFY(query.exec(
+        "CREATE TABLE transcript_entries ("
+        "entry_id TEXT PRIMARY KEY, table_id TEXT NOT NULL, phase TEXT NOT "
+        "NULL, round_no INTEGER NOT NULL, "
+        "speaker_seat_id TEXT, speaker_name TEXT NOT NULL, is_decision INTEGER "
+        "NOT NULL, content TEXT NOT NULL, timestamp TEXT NOT NULL)"));
+    setup.close();
+  }
+  QSqlDatabase::removeDatabase(setupConnectionName);
+
+  const QString managerConnection = QUuid::createUuid().toString();
+  DatabaseManager manager(databasePath, managerConnection);
+  QVERIFY(manager.initialize());
+
+  const QString inspectConnectionName = QUuid::createUuid().toString();
+  {
+    QSqlDatabase inspect =
+        QSqlDatabase::addDatabase("QSQLITE", inspectConnectionName);
+    inspect.setDatabaseName(databasePath);
+    QVERIFY(inspect.open());
+    QSqlQuery query(inspect);
+    QVERIFY(query.exec("PRAGMA table_info(transcript_entries)"));
+    bool foundEntryType = false;
+    while (query.next()) {
+      foundEntryType =
+          foundEntryType || query.value(1).toString() == "entry_type";
+    }
+    QVERIFY(foundEntryType);
+    inspect.close();
+  }
+  QSqlDatabase::removeDatabase(inspectConnectionName);
+}
+
+QTEST_GUILESS_MAIN(DatabaseTests)
+
+#include "test_database.moc"

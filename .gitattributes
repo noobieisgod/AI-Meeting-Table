@@ -1,0 +1,31 @@
+* -text
+
+# Binary assets and generated package formats
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.7z binary
+*.apk binary
+*.aab binary
+*.apks binary
+*.aar binary
+
+# Local data and signing formats must never be normalized
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.keystore binary
+*.jks binary
+*.p12 binary
+*.pfx binary
+*.pkcs12 binary
+*.pem binary
+*.key binary
+*.crt binary
+*.cer binary
+*.der binary

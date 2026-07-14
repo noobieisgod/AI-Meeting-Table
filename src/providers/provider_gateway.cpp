@@ -1,0 +1,1047 @@
+#include "providers/provider_gateway.h"
+
+#include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
+#include <QHttpMultiPart>
+#include <QJsonDocument>
+#include <QMimeDatabase>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSslError>
+#include <QThread>
+#include <QTimer>
+#include <QUrlQuery>
+
+#include "core/response_parser.h"
+#include "services/credential_store.h"
+
+namespace amt {
+
+namespace {
+
+struct NetworkResult {
+    int statusCode = 0;
+    QByteArray body;
+    QString error;
+    int networkErrorCode = 0;
+    int sslErrorCount = 0;
+    QList<QNetworkReply::RawHeaderPair> headers;
+};
+
+void captureSslErrors(QNetworkReply *reply, NetworkResult *result)
+{
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply, [result](const QList<QSslError> &errors) {
+        result->sslErrorCount += static_cast<int>(errors.size());
+    });
+}
+
+NetworkResult performJsonRequest(QNetworkAccessManager &manager,
+                                 const QNetworkRequest &request,
+                                 const QByteArray &body,
+                                 const QByteArray &method = "POST")
+{
+    QNetworkReply *reply = nullptr;
+    if (method == "POST") {
+        reply = manager.post(request, body);
+    } else {
+        reply = manager.sendCustomRequest(request, method, body);
+    }
+
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    bool timedOut = false;
+    QObject::connect(&timeoutTimer, &QTimer::timeout, reply, [reply, &timedOut]() {
+        timedOut = true;
+        reply->abort();
+    });
+    NetworkResult result;
+    captureSslErrors(reply, &result);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timeoutTimer.start(90000);
+    loop.exec();
+
+    result.statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    result.body = reply->readAll();
+    result.headers = reply->rawHeaderPairs();
+    if (reply->error() != QNetworkReply::NoError) {
+        result.networkErrorCode = static_cast<int>(reply->error());
+        result.error = timedOut
+            ? "timeout"
+            : "network";
+    }
+    reply->deleteLater();
+    return result;
+}
+
+NetworkResult performMultipartRequest(QNetworkAccessManager &manager,
+                                      const QNetworkRequest &request,
+                                      QHttpMultiPart *multipart)
+{
+    QNetworkReply *reply = manager.post(request, multipart);
+    multipart->setParent(reply);
+
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    bool timedOut = false;
+    QObject::connect(&timeoutTimer, &QTimer::timeout, reply, [reply, &timedOut]() {
+        timedOut = true;
+        reply->abort();
+    });
+    NetworkResult result;
+    captureSslErrors(reply, &result);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timeoutTimer.start(90000);
+    loop.exec();
+
+    result.statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    result.body = reply->readAll();
+    result.headers = reply->rawHeaderPairs();
+    if (reply->error() != QNetworkReply::NoError) {
+        result.networkErrorCode = static_cast<int>(reply->error());
+        result.error = timedOut
+            ? "timeout"
+            : "network";
+    }
+    reply->deleteLater();
+    return result;
+}
+
+NetworkResult performDeviceRequest(QNetworkAccessManager &manager,
+                                   const QNetworkRequest &request,
+                                   QIODevice *body)
+{
+    QNetworkReply *reply = manager.post(request, body);
+
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    bool timedOut = false;
+    QObject::connect(&timeoutTimer, &QTimer::timeout, reply, [reply, &timedOut]() {
+        timedOut = true;
+        reply->abort();
+    });
+    NetworkResult result;
+    captureSslErrors(reply, &result);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timeoutTimer.start(90000);
+    loop.exec();
+
+    result.statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    result.body = reply->readAll();
+    result.headers = reply->rawHeaderPairs();
+    if (reply->error() != QNetworkReply::NoError) {
+        result.networkErrorCode = static_cast<int>(reply->error());
+        result.error = timedOut
+            ? "timeout"
+            : "network";
+    }
+    reply->deleteLater();
+    return result;
+}
+
+QString headerValue(const QList<QNetworkReply::RawHeaderPair> &headers, const QByteArray &key)
+{
+    for (const auto &header : headers) {
+        if (header.first.compare(key, Qt::CaseInsensitive) == 0) {
+            return QString::fromUtf8(header.second).trimmed();
+        }
+    }
+    return {};
+}
+
+QString providerRequestFailure(const ProviderRequest &request,
+                               const QString &providerName,
+                               const QString &endpointType,
+                               const NetworkResult &result,
+                               const QString &stage = "failed after sending",
+                               const QStringList &extraDetails = {})
+{
+    QStringList details;
+    details << QString("%1 %2").arg(providerName, endpointType);
+    details << QString("model=%1").arg(request.model.trimmed().isEmpty() ? "<empty>" : request.model);
+    details << QString("keyPresent=%1").arg(request.apiKey.trimmed().isEmpty() ? "no" : "yes");
+    details << QString("stage=%1").arg(stage);
+    details << extraDetails;
+    if (result.statusCode > 0) {
+        details << QString("http=%1").arg(result.statusCode);
+    }
+    if (!result.error.isEmpty()) {
+        details << QString("network=%1").arg(result.error)
+                << QString("networkCode=%1").arg(result.networkErrorCode);
+    }
+    if (result.sslErrorCount > 0) {
+        details << QString("sslErrorCount=%1").arg(result.sslErrorCount);
+    }
+    return details.join(" | ");
+}
+
+QString parseFirstText(const QJsonValue &value)
+{
+    if (value.isObject()) {
+        const auto object = value.toObject();
+        if (object.value("type").toString().contains("text", Qt::CaseInsensitive)
+            && object.value("text").isString()) {
+            return object.value("text").toString();
+        }
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            const QString candidate = parseFirstText(it.value());
+            if (!candidate.isEmpty()) {
+                return candidate;
+            }
+        }
+    } else if (value.isArray()) {
+        for (const auto &item : value.toArray()) {
+            const QString candidate = parseFirstText(item);
+            if (!candidate.isEmpty()) {
+                return candidate;
+            }
+        }
+    } else if (value.isString()) {
+        return value.toString();
+    }
+    return {};
+}
+
+QString phasePurposeText(Phase phase)
+{
+    switch (phase) {
+    case Phase::Research:
+        return "Research phase: Work independently. Gather evidence, identify uncertainties, and note useful constraints. Do not collaborate, create the final result, issue a plan, make a QC ruling, or make a final decision.";
+    case Phase::Planning:
+        return "Planning phase: Compare research and form a plan. Do not create the final result. The Lead Planner owns the plan unless another seat identifies a concrete, evidence-backed flaw.";
+    case Phase::Execution:
+        return "Execution phase: Create or revise the official artifact. Only the Lead Executioner owns the official artifact. Other seats may give constraints, snippets, examples, or warnings.";
+    case Phase::QualityControl:
+        return "Quality Control phase: Review and verify the artifact. Do not rewrite it unless explicitly instructed. Only the Lead Quality Control reviewer may issue the final QC ruling.";
+    case Phase::Present:
+        return "Final Decision phase: Review the artifact and discussion. Only the Final Decision Maker may approve, revise, stop, or issue final delivery rulings.";
+    default:
+        return {};
+    }
+}
+
+QString stablePromptText()
+{
+    return QStringList{
+        "Stable behavior:",
+        "You are one seat in a multi-agent meeting table. Obey the current phase before any prior conversation history.",
+        "Respond in English unless the user explicitly asks for another language.",
+        "Do not produce final deliverables before Execution. Do not overstep your seat authority.",
+        "Research policy: use online research only when research tools are available and the task benefits from current, factual, niche, legal, technical, market, scientific, product, policy, or news information.",
+        "Every substantive response must include exactly one short line: Research used: {brief source/tool summary}. If research tools are unavailable, write: Research used: none available. If tools are available but not needed, write: Research used: not needed.",
+        "Quality rules: be concise and direct. Avoid filler, flattery, motivational language, generic AI-sounding structure, and formulaic ceremony. Do not use em dashes. Think through uncertainty and contradictions silently, then respond with the final answer only.",
+        "If evaluating or grading, define a rubric first and grade against it with justification. If MLA citations are requested, use current MLA guidance and cite in MLA style.",
+        "History, roster, artifacts, and attachments are context. User instructions and current phase rules take priority."
+    }.join("\n");
+}
+
+QString researchToolText(const ProviderRequest &request)
+{
+    if (request.provider == ProviderKind::Gemini && request.phase == Phase::Research) {
+        return "Research tools available this turn: Gemini Google Search.";
+    }
+    return "Research tools available this turn: none available.";
+}
+
+QString leadAuthorityText(Phase phase, const QString &role)
+{
+    if (phase == Phase::Planning && role == "Lead Planner") {
+        return "Lead authority: You are the Lead Planner. Own the plan. Other seats should defer unless they identify a concrete, evidence-backed flaw.";
+    }
+    if (phase == Phase::Execution && role == "Lead Executioner") {
+        return "Lead authority: You are the Lead Executioner. Create or revise the official artifact. Other seats should not present their own answer as the official artifact.";
+    }
+    if (phase == Phase::QualityControl && role == "Lead Quality Control") {
+        return "Lead authority: You are the Lead Quality Control reviewer. Rule whether revision is required. Other seats may identify possible issues but must not issue the final QC ruling.";
+    }
+    if (phase == Phase::Present && role == "Final Decision Maker") {
+        return "Lead authority: You are the Final Decision Maker. End with exactly one parseable ruling line: FINAL_RULING: APPROVE, FINAL_RULING: REVISE, or FINAL_RULING: STOP.";
+    }
+    if (role == "Final Decision Maker") {
+        return "Lead authority: You are the Final Decision Maker for this phase only. Resolve phase disputes with PROCEED, REVISE, or STOP. Do not approve the final artifact before Present.";
+    }
+    return "Authority reminder: Do not overstep your role. Defer to the phase lead unless you identify a concrete, evidence-backed flaw.";
+}
+
+QString buildPromptText(const ProviderRequest &request)
+{
+    QStringList lines;
+
+    lines << stablePromptText();
+    lines << "";
+    lines << "Dynamic context:";
+
+    const QString displayName = request.prompt.value("seat_display_name").toString();
+    const QString modelName = request.prompt.value("model_display_name").toString();
+    if (!displayName.isEmpty()) {
+        lines << QString("Seat: %1%2")
+                    .arg(displayName, modelName.isEmpty() ? "" : QString(", powered by %1").arg(modelName));
+    }
+
+    lines << QString("Table: %1").arg(request.prompt.value("table_title").toString());
+    lines << QString("Phase: %1").arg(toString(request.phase));
+    const QString role = request.prompt.value("role").toString();
+    lines << QString("Seat role: %1").arg(role);
+    lines << researchToolText(request);
+
+    const QString purpose = phasePurposeText(request.phase);
+    if (!purpose.isEmpty()) {
+        lines << purpose;
+    }
+    lines << leadAuthorityText(request.phase, role);
+
+    const auto rosterArray = request.prompt.value("participant_roster").toArray();
+    if (!rosterArray.isEmpty()) {
+        QStringList rosterEntries;
+        for (const auto &p : rosterArray) {
+            const auto obj = p.toObject();
+            rosterEntries << QString("- %1 (%2, %3)")
+                                .arg(obj.value("name").toString(),
+                                     obj.value("model").toString(),
+                                     obj.value("role").toString());
+        }
+        lines << "Other participants at this table:";
+        lines << rosterEntries.join("\n");
+    }
+
+    const QString latestUser = request.prompt.value("latest_user_message").toString().trimmed();
+    if (!latestUser.isEmpty()) {
+        lines << QString("Current user objective: %1").arg(latestUser);
+    }
+
+    const QString instruction = request.prompt.value("instruction").toString().trimmed();
+    if (!instruction.isEmpty()) {
+        lines << QString("Instruction: %1").arg(instruction);
+    }
+
+    // Token discipline
+    lines << "Keep the response compact enough to leave room for the user's task. Preserve necessary detail and avoid repetition.";
+
+    const QString artifactSummary = request.prompt.value("current_artifact_summary").toString().trimmed();
+    if (!artifactSummary.isEmpty()) {
+        lines << QString("Current artifact summary: %1").arg(artifactSummary);
+    }
+    const QString artifactContent = request.prompt.value("current_artifact_content").toString().trimmed();
+    if (!artifactContent.isEmpty()) {
+        lines << "Current artifact content:";
+        lines << artifactContent;
+    }
+
+    const auto transcriptHistory = request.prompt.value("transcript_history").toArray();
+    if (!transcriptHistory.isEmpty()) {
+        lines << "Conversation history:";
+        for (const auto &entryValue : transcriptHistory) {
+            const auto entry = entryValue.toObject();
+            lines << QString("- %1: %2").arg(entry.value("speaker").toString(), entry.value("content").toString());
+        }
+    }
+
+    return lines.join("\n");
+}
+
+QString detectMimeType(const QString &filePath)
+{
+    const QMimeType mimeType = QMimeDatabase().mimeTypeForFile(filePath, QMimeDatabase::MatchContent);
+    if (mimeType.isValid() && !mimeType.name().isEmpty()) {
+        return mimeType.name();
+    }
+    return "application/octet-stream";
+}
+
+QString readTextAttachment(const QString &filePath)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    const qint64 fileSize = file.size();
+    const qint64 maxRead = 32768;
+    const QByteArray data = file.read(maxRead);
+    QString text = QString::fromUtf8(data);
+    if (fileSize > maxRead) {
+        text += QString("\n\n[Content truncated. Original file is %1 bytes]").arg(fileSize);
+    }
+    return text;
+}
+
+bool isAnthropicFileBlockMime(const QString &mimeType)
+{
+    return mimeType.startsWith("image/") || mimeType == "application/pdf";
+}
+
+QString geminiHandle(const QString &uri, const QString &mimeType)
+{
+    return QString("%1|%2").arg(uri, mimeType);
+}
+
+QString geminiUriFromHandle(const QString &handle)
+{
+    const QStringList parts = handle.split('|');
+    if (parts.size() >= 3) {
+        return parts.at(1);
+    }
+    return parts.value(0);
+}
+
+QString geminiMimeFromHandle(const QString &handle)
+{
+    const QStringList parts = handle.split('|');
+    if (parts.size() >= 3) {
+        return parts.at(2);
+    }
+    return parts.value(1);
+}
+
+QString geminiNameFromHandle(const QString &handle)
+{
+    const QStringList parts = handle.split('|');
+    return parts.size() >= 3 ? parts.at(0) : QString();
+}
+
+QString geminiHandle(const QString &name, const QString &uri, const QString &mimeType)
+{
+    return QString("%1|%2|%3").arg(name, uri, mimeType);
+}
+
+QUrl geminiApiUrl(const QString &path, const QString &apiKey)
+{
+    QUrl url(QString("https://generativelanguage.googleapis.com%1").arg(path));
+    QUrlQuery query;
+    query.addQueryItem("key", apiKey);
+    url.setQuery(query);
+    return url;
+}
+
+QJsonObject pollGeminiFileReady(QNetworkAccessManager &manager, const QString &apiKey, QJsonObject fileObject)
+{
+    const QString fileName = fileObject.value("name").toString();
+    if (fileName.isEmpty()) {
+        return fileObject;
+    }
+
+    QString stateName = fileObject.value("state").toObject().value("name").toString();
+    if (stateName.isEmpty() || stateName == "ACTIVE") {
+        return fileObject;
+    }
+
+    for (int attempt = 0; attempt < 12; ++attempt) {
+        QThread::sleep(1);
+        QNetworkRequest request{geminiApiUrl(QString("/v1beta/%1").arg(fileName), apiKey)};
+        const auto result = performJsonRequest(manager, request, QByteArray(), "GET");
+        if (!result.error.isEmpty() || result.statusCode >= 300) {
+            break;
+        }
+        const auto refreshedFile = QJsonDocument::fromJson(result.body).object();
+        const QString refreshedState = refreshedFile.value("state").toObject().value("name").toString();
+        if (refreshedState.isEmpty() || refreshedState == "ACTIVE") {
+            return refreshedFile;
+        }
+        fileObject = refreshedFile;
+    }
+
+    return fileObject;
+}
+
+bool geminiHandleLooksReusable(const QString &handle)
+{
+    const QString uri = geminiUriFromHandle(handle).trimmed();
+    const QString mimeType = geminiMimeFromHandle(handle).trimmed();
+    return !uri.isEmpty() && uri.startsWith("https://") && !mimeType.isEmpty();
+}
+
+double openAiPricePerInputToken(const QString &model)
+{
+    if (model == "gpt-5") return 1.25 / 1000000.0;
+    if (model == "gpt-5-mini") return 0.25 / 1000000.0;
+    if (model == "gpt-5-nano") return 0.05 / 1000000.0;
+    if (model == "gpt-5.2") return 1.75 / 1000000.0;
+    if (model == "gpt-5.2-pro") return 21.00 / 1000000.0;
+    if (model == "gpt-5.1") return 1.25 / 1000000.0;
+    if (model == "gpt-5.1-codex") return 1.25 / 1000000.0;
+    if (model == "gpt-5-pro") return 15.00 / 1000000.0;
+    if (model == "o3") return 2.00 / 1000000.0;
+    if (model == "o3-pro") return 20.00 / 1000000.0;
+    if (model == "o4-mini") return 1.10 / 1000000.0;
+    return 0.0;
+}
+
+double openAiPricePerOutputToken(const QString &model)
+{
+    if (model == "gpt-5") return 10.00 / 1000000.0;
+    if (model == "gpt-5-mini") return 2.00 / 1000000.0;
+    if (model == "gpt-5-nano") return 0.40 / 1000000.0;
+    if (model == "gpt-5.2") return 14.00 / 1000000.0;
+    if (model == "gpt-5.2-pro") return 168.00 / 1000000.0;
+    if (model == "gpt-5.1") return 10.00 / 1000000.0;
+    if (model == "gpt-5.1-codex") return 10.00 / 1000000.0;
+    if (model == "gpt-5-pro") return 120.00 / 1000000.0;
+    if (model == "o3") return 8.00 / 1000000.0;
+    if (model == "o3-pro") return 80.00 / 1000000.0;
+    if (model == "o4-mini") return 4.40 / 1000000.0;
+    return 0.0;
+}
+
+double estimateOpenAiCost(const QString &model, int inputTokens, int outputTokens)
+{
+    return inputTokens * openAiPricePerInputToken(model) + outputTokens * openAiPricePerOutputToken(model);
+}
+
+// Issue #17: Gemini cost estimation
+double geminiPricePerInputToken(const QString &model)
+{
+    if (model.contains("gemini-2.5-pro") || model.contains("gemini-3.1-pro")) return 1.25 / 1000000.0;
+    if (model.contains("gemini-2.5-flash-lite") || model.contains("gemini-3.1-flash-lite")) return 0.04 / 1000000.0;
+    if (model.contains("gemini-2.5-flash") || model.contains("gemini-3-flash")) return 0.15 / 1000000.0;
+    if (model.contains("gemini-2.0-flash-lite")) return 0.04 / 1000000.0;
+    if (model.contains("gemini-2.0-flash")) return 0.10 / 1000000.0;
+    return 0.0;
+}
+
+double geminiPricePerOutputToken(const QString &model)
+{
+    if (model.contains("gemini-2.5-pro") || model.contains("gemini-3.1-pro")) return 10.00 / 1000000.0;
+    if (model.contains("gemini-2.5-flash-lite") || model.contains("gemini-3.1-flash-lite")) return 0.15 / 1000000.0;
+    if (model.contains("gemini-2.5-flash") || model.contains("gemini-3-flash")) return 0.60 / 1000000.0;
+    if (model.contains("gemini-2.0-flash-lite")) return 0.15 / 1000000.0;
+    if (model.contains("gemini-2.0-flash")) return 0.40 / 1000000.0;
+    return 0.0;
+}
+
+double estimateGeminiCost(const QString &model, int inputTokens, int outputTokens)
+{
+    return inputTokens * geminiPricePerInputToken(model) + outputTokens * geminiPricePerOutputToken(model);
+}
+
+// Issue #17: Anthropic cost estimation
+double anthropicPricePerInputToken(const QString &model)
+{
+    if (model.contains("claude-sonnet-4") || model.contains("claude-3.5-sonnet")) return 3.00 / 1000000.0;
+    if (model.contains("claude-opus-4") || model.contains("claude-3-opus")) return 15.00 / 1000000.0;
+    if (model.contains("claude-haiku-4") || model.contains("claude-3.5-haiku") || model.contains("claude-3-haiku")) return 0.80 / 1000000.0;
+    return 0.0;
+}
+
+double anthropicPricePerOutputToken(const QString &model)
+{
+    if (model.contains("claude-sonnet-4") || model.contains("claude-3.5-sonnet")) return 15.00 / 1000000.0;
+    if (model.contains("claude-opus-4") || model.contains("claude-3-opus")) return 75.00 / 1000000.0;
+    if (model.contains("claude-haiku-4") || model.contains("claude-3.5-haiku") || model.contains("claude-3-haiku")) return 4.00 / 1000000.0;
+    return 0.0;
+}
+
+double estimateAnthropicCost(const QString &model, int inputTokens, int outputTokens)
+{
+    return inputTokens * anthropicPricePerInputToken(model) + outputTokens * anthropicPricePerOutputToken(model);
+}
+
+ProviderResponse makeErrorResponse(const ProviderRequest &request, const QString &message)
+{
+    ProviderResponse response;
+    response.requestId = request.requestId;
+    response.sessionId = request.sessionId;
+    response.seatId = request.seatId;
+    response.runGeneration = request.runGeneration;
+    response.success = false;
+    response.errorMessage = message;
+    return response;
+}
+
+void enrichParsedSignals(const ProviderRequest &request, ProviderResponse &response)
+{
+    const QString trimmed = response.content.trimmed();
+    response.skipped = amt::response::hasSkipPrefix(trimmed);
+    const bool finalDecisionRequest = request.phase == Phase::Present
+        || request.prompt.value("role").toString().compare("Final Decision Maker", Qt::CaseInsensitive) == 0
+        || request.prompt.value("decision_mode").toString().compare("arbitration", Qt::CaseInsensitive) == 0;
+    if (finalDecisionRequest) {
+        const bool arbitration = request.prompt.value("decision_mode").toString().compare("arbitration", Qt::CaseInsensitive) == 0;
+        const auto parsed = amt::response::parseDecision(trimmed, arbitration);
+        response.decisionOutcome = parsed.outcome;
+        response.multipleDecisionRulings = parsed.hasMultipleExplicitRulings();
+    }
+}
+
+ProviderResponse callOpenAi(QNetworkAccessManager &manager, const ProviderRequest &request)
+{
+    ProviderResponse response;
+    response.requestId = request.requestId;
+    response.sessionId = request.sessionId;
+    response.seatId = request.seatId;
+    response.runGeneration = request.runGeneration;
+
+    const QString promptText = buildPromptText(request);
+    QJsonArray content;
+    content.append(QJsonObject{{"type", "input_text"}, {"text", promptText}});
+
+    for (const auto &attachmentValue : request.prompt.value("attachments").toArray()) {
+        const auto attachment = attachmentValue.toObject();
+        QString fileId = attachment.value("providerHandle").toString();
+        if (fileId.isEmpty()) {
+            auto *file = new QFile(attachment.value("filePath").toString());
+            if (!file->open(QIODevice::ReadOnly)) {
+                delete file;
+                return makeErrorResponse(request, QString("Failed to open attachment: %1").arg(attachment.value("displayName").toString()));
+            }
+
+            auto *multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+            file->setParent(multipart);
+
+            QHttpPart purposePart;
+            purposePart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"purpose\""));
+            purposePart.setBody("user_data");
+            multipart->append(purposePart);
+
+            QHttpPart filePart;
+            filePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                               QVariant(QString("form-data; name=\"file\"; filename=\"%1\"").arg(attachment.value("fileName").toString())));
+            filePart.setHeader(QNetworkRequest::ContentTypeHeader, detectMimeType(attachment.value("filePath").toString()));
+            filePart.setBodyDevice(file);
+            multipart->append(filePart);
+
+            QNetworkRequest uploadRequest{QUrl("https://api.openai.com/v1/files")};
+            uploadRequest.setRawHeader("Authorization", QByteArray("Bearer ") + request.apiKey.toUtf8());
+            const auto uploadResult = performMultipartRequest(manager, uploadRequest, multipart);
+            if (!uploadResult.error.isEmpty() || uploadResult.statusCode >= 300) {
+                return makeErrorResponse(request, providerRequestFailure(request, "OpenAI", "file upload", uploadResult));
+            }
+            const auto uploadJson = QJsonDocument::fromJson(uploadResult.body).object();
+            fileId = uploadJson.value("id").toString();
+            if (fileId.isEmpty()) {
+                return makeErrorResponse(request, "OpenAI file upload did not return a file id.");
+            }
+            response.attachmentProviderHandles.insert(attachment.value("attachmentId").toString(), fileId);
+        }
+        content.append(QJsonObject{{"type", "input_file"}, {"file_id", fileId}});
+    }
+
+    QJsonObject body{
+        {"model", request.model},
+        {"input", QJsonArray{QJsonObject{{"role", "user"}, {"content", content}}}}
+    };
+    const QString reasoningEffort = request.prompt.value("reasoning_effort").toString();
+    if (!reasoningEffort.isEmpty()) {
+        body.insert("reasoning", QJsonObject{{"effort", reasoningEffort}});
+    }
+
+    QNetworkRequest apiRequest{QUrl("https://api.openai.com/v1/responses")};
+    apiRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    apiRequest.setRawHeader("Authorization", QByteArray("Bearer ") + request.apiKey.toUtf8());
+    const auto apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    if (!apiResult.error.isEmpty() || apiResult.statusCode >= 300) {
+        return makeErrorResponse(request, providerRequestFailure(request, "OpenAI", "Responses API", apiResult));
+    }
+
+    const auto json = QJsonDocument::fromJson(apiResult.body).object();
+    response.success = true;
+    response.content = parseFirstText(json.value("output"));
+    const auto usage = json.value("usage").toObject();
+    const int inputTokens = usage.value("input_tokens").toInt();
+    const int outputTokens = usage.value("output_tokens").toInt();
+    response.usedTokens = usage.value("total_tokens").toInt(inputTokens + outputTokens);
+    response.estimatedCost = estimateOpenAiCost(request.model, inputTokens, outputTokens);
+    if (response.content.isEmpty()) {
+        response.content = parseFirstText(json);
+    }
+    return response;
+}
+
+ProviderResponse callGemini(QNetworkAccessManager &manager, const ProviderRequest &request)
+{
+    ProviderResponse response;
+    response.requestId = request.requestId;
+    response.sessionId = request.sessionId;
+    response.seatId = request.seatId;
+    response.runGeneration = request.runGeneration;
+
+    auto uploadAttachment = [&](const QJsonObject &attachment, QString *outUri, QString *outMime) -> QString {
+        const QString filePath = attachment.value("filePath").toString();
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            response.errorMessage = QString("Failed to open attachment: %1").arg(attachment.value("displayName").toString());
+            return {};
+        }
+        const qint64 fileSize = file.size();
+        const QString mimeType = detectMimeType(filePath);
+
+        QNetworkRequest startRequest{geminiApiUrl("/upload/v1beta/files", request.apiKey)};
+        startRequest.setRawHeader("X-Goog-Upload-Protocol", "resumable");
+        startRequest.setRawHeader("X-Goog-Upload-Command", "start");
+        startRequest.setRawHeader("X-Goog-Upload-Header-Content-Length", QByteArray::number(fileSize));
+        startRequest.setRawHeader("X-Goog-Upload-Header-Content-Type", mimeType.toUtf8());
+        startRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        const QByteArray startBody = QJsonDocument(QJsonObject{
+            {"file", QJsonObject{{"display_name", attachment.value("displayName").toString()}}}
+        }).toJson(QJsonDocument::Compact);
+        const auto startResult = performJsonRequest(manager, startRequest, startBody);
+        const QString uploadUrl = headerValue(startResult.headers, "x-goog-upload-url");
+        if (!startResult.error.isEmpty() || uploadUrl.isEmpty()) {
+            response.errorMessage = providerRequestFailure(request, "Google", "file upload start", startResult);
+            return {};
+        }
+
+        QNetworkRequest uploadRequest{QUrl(uploadUrl)};
+        uploadRequest.setRawHeader("Content-Length", QByteArray::number(fileSize));
+        uploadRequest.setRawHeader("X-Goog-Upload-Offset", "0");
+        uploadRequest.setRawHeader("X-Goog-Upload-Command", "upload, finalize");
+        const auto uploadResult = performDeviceRequest(manager, uploadRequest, &file);
+        if (!uploadResult.error.isEmpty() || uploadResult.statusCode >= 300) {
+            response.errorMessage = providerRequestFailure(request, "Google", "file upload", uploadResult);
+            return {};
+        }
+
+        auto uploadJson = QJsonDocument::fromJson(uploadResult.body).object().value("file").toObject();
+        uploadJson = pollGeminiFileReady(manager, request.apiKey, uploadJson);
+        const QString fileName = uploadJson.value("name").toString();
+        const QString fileUri = uploadJson.value("uri").toString();
+        const QString resolvedMime = uploadJson.value("mimeType").toString(mimeType);
+        const QString stateName = uploadJson.value("state").toObject().value("name").toString();
+        if (fileUri.isEmpty() || (!stateName.isEmpty() && stateName != "ACTIVE")) {
+            response.errorMessage = QString("Gemini file upload did not return an active file (state=%1, uri=%2).")
+                .arg(stateName.isEmpty() ? "unknown" : stateName,
+                     fileUri.isEmpty() ? "<empty>" : fileUri);
+            return {};
+        }
+
+        if (outUri) {
+            *outUri = fileUri;
+        }
+        if (outMime) {
+            *outMime = resolvedMime;
+        }
+        return geminiHandle(fileName, fileUri, resolvedMime);
+    };
+
+    auto buildParts = [&](bool forceFreshUpload, bool *hadReusableHandles) {
+        QJsonArray builtParts;
+        builtParts.append(QJsonObject{{"text", buildPromptText(request)}});
+        if (hadReusableHandles) {
+            *hadReusableHandles = false;
+        }
+
+        for (const auto &attachmentValue : request.prompt.value("attachments").toArray()) {
+            const auto attachment = attachmentValue.toObject();
+            QString handle = attachment.value("providerHandle").toString();
+            QString fileUri;
+            QString mimeType;
+
+            if (!forceFreshUpload && geminiHandleLooksReusable(handle)) {
+                fileUri = geminiUriFromHandle(handle);
+                mimeType = geminiMimeFromHandle(handle);
+                if (hadReusableHandles) {
+                    *hadReusableHandles = true;
+                }
+            } else {
+                handle = uploadAttachment(attachment, &fileUri, &mimeType);
+                if (handle.isEmpty()) {
+                    return QJsonArray{};
+                }
+                response.attachmentProviderHandles.insert(attachment.value("attachmentId").toString(), handle);
+            }
+
+            builtParts.append(QJsonObject{
+                {"file_data", QJsonObject{
+                    {"mime_type", mimeType},
+                    {"file_uri", fileUri}
+                }}
+            });
+        }
+
+        return builtParts;
+    };
+
+    bool usedReusableHandles = false;
+    QJsonArray parts = buildParts(false, &usedReusableHandles);
+    if (parts.isEmpty() && !request.prompt.value("attachments").toArray().isEmpty()) {
+        return makeErrorResponse(request, response.errorMessage);
+    }
+
+    QJsonObject generationConfig;
+    const QString thinkingLevel = request.prompt.value("thinking_level").toString();
+    if (!thinkingLevel.isEmpty()) {
+        if (request.model.startsWith("gemini-3")) {
+            generationConfig.insert("thinkingConfig", QJsonObject{{"thinkingLevel", thinkingLevel}});
+        } else {
+            const int budget = request.prompt.value("thinking_budget_tokens").toInt(4096);
+            generationConfig.insert("thinkingConfig", QJsonObject{{"thinkingBudget", budget}});
+        }
+    }
+
+    QJsonObject body{
+        {"contents", QJsonArray{QJsonObject{{"role", "user"}, {"parts", parts}}}}
+    };
+    if (!generationConfig.isEmpty()) {
+        body.insert("generationConfig", generationConfig);
+    }
+
+    const bool geminiSearchEnabled = request.phase == Phase::Research;
+    if (geminiSearchEnabled) {
+        body.insert("tools", QJsonArray{
+            QJsonObject{
+                {"google_search", QJsonObject{}}
+            }
+        });
+    }
+
+    QNetworkRequest apiRequest{geminiApiUrl(QString("/v1beta/models/%1:generateContent").arg(request.model), request.apiKey)};
+    apiRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    NetworkResult apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    if ((apiResult.error.isEmpty() && apiResult.statusCode < 300) == false
+        && usedReusableHandles
+        && (apiResult.statusCode == 400 || apiResult.statusCode == 404)) {
+        response.attachmentProviderHandles = {};
+        parts = buildParts(true, nullptr);
+        if (parts.isEmpty() && !request.prompt.value("attachments").toArray().isEmpty()) {
+            return makeErrorResponse(request, response.errorMessage);
+        }
+        body.insert("contents", QJsonArray{QJsonObject{{"role", "user"}, {"parts", parts}}});
+        apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    }
+    if (!apiResult.error.isEmpty() || apiResult.statusCode >= 300) {
+        return makeErrorResponse(request, providerRequestFailure(
+            request,
+            "Google",
+            "Gemini generateContent",
+            apiResult,
+            "failed after sending",
+            {
+                QString("toolsEnabled=%1").arg(geminiSearchEnabled ? "yes" : "no"),
+                QString("tool=%1").arg(geminiSearchEnabled ? "google_search" : "none")
+            }));
+    }
+
+    const auto json = QJsonDocument::fromJson(apiResult.body).object();
+    response.success = true;
+    response.content = parseFirstText(json.value("candidates"));
+    const auto usage = json.value("usageMetadata").toObject();
+    const int promptTokens = usage.value("promptTokenCount").toInt();
+    const int outputTokens = usage.value("candidatesTokenCount").toInt();
+    response.usedTokens = usage.value("totalTokenCount").toInt(promptTokens + outputTokens);
+    response.estimatedCost = estimateGeminiCost(request.model, promptTokens, outputTokens);
+    return response;
+}
+
+ProviderResponse callAnthropic(QNetworkAccessManager &manager, const ProviderRequest &request)
+{
+    ProviderResponse response;
+    response.requestId = request.requestId;
+    response.sessionId = request.sessionId;
+    response.seatId = request.seatId;
+    response.runGeneration = request.runGeneration;
+
+    QString promptText = buildPromptText(request);
+    QJsonArray content;
+    content.append(QJsonObject{{"type", "text"}, {"text", promptText}});
+
+    for (const auto &attachmentValue : request.prompt.value("attachments").toArray()) {
+        const auto attachment = attachmentValue.toObject();
+        QString fileId = attachment.value("providerHandle").toString();
+        const QString filePath = attachment.value("filePath").toString();
+        const QString mimeType = detectMimeType(filePath);
+
+        if (!isAnthropicFileBlockMime(mimeType)) {
+            const QString inlineText = readTextAttachment(filePath).trimmed();
+            if (!inlineText.isEmpty()) {
+                content.append(QJsonObject{{"type", "text"}, {"text", QString("Attachment %1:\n%2").arg(attachment.value("displayName").toString(), inlineText)}});
+            }
+            continue;
+        }
+
+        if (fileId.isEmpty()) {
+            auto *file = new QFile(filePath);
+            if (!file->open(QIODevice::ReadOnly)) {
+                delete file;
+                return makeErrorResponse(request, QString("Failed to open attachment: %1").arg(attachment.value("displayName").toString()));
+            }
+
+            auto *multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+            file->setParent(multipart);
+            QHttpPart filePart;
+            filePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                               QVariant(QString("form-data; name=\"file\"; filename=\"%1\"").arg(attachment.value("fileName").toString())));
+            filePart.setHeader(QNetworkRequest::ContentTypeHeader, mimeType);
+            filePart.setBodyDevice(file);
+            multipart->append(filePart);
+
+            QNetworkRequest uploadRequest{QUrl("https://api.anthropic.com/v1/files")};
+            uploadRequest.setRawHeader("x-api-key", request.apiKey.toUtf8());
+            uploadRequest.setRawHeader("anthropic-version", "2023-06-01");
+            uploadRequest.setRawHeader("anthropic-beta", "files-api-2025-04-14");
+            const auto uploadResult = performMultipartRequest(manager, uploadRequest, multipart);
+            if (!uploadResult.error.isEmpty() || uploadResult.statusCode >= 300) {
+                return makeErrorResponse(request, providerRequestFailure(request, "Anthropic", "file upload", uploadResult));
+            }
+            const auto uploadJson = QJsonDocument::fromJson(uploadResult.body).object();
+            fileId = uploadJson.value("id").toString();
+            if (fileId.isEmpty()) {
+                return makeErrorResponse(request, "Anthropic file upload did not return a file id.");
+            }
+            response.attachmentProviderHandles.insert(attachment.value("attachmentId").toString(), fileId);
+        }
+
+        if (mimeType.startsWith("image/")) {
+            content.append(QJsonObject{
+                {"type", "image"},
+                {"source", QJsonObject{
+                    {"type", "file"},
+                    {"file_id", fileId}
+                }}
+            });
+        } else {
+            content.append(QJsonObject{
+                {"type", "document"},
+                {"source", QJsonObject{
+                    {"type", "file"},
+                    {"file_id", fileId}
+                }}
+            });
+        }
+    }
+
+    const int thinkingBudget = request.prompt.value("thinking_budget_tokens").toInt();
+    QJsonObject body{
+        {"model", request.model},
+        {"max_tokens", qMax(4096, thinkingBudget > 0 ? thinkingBudget + 4096 : 4096)},
+        {"messages", QJsonArray{QJsonObject{{"role", "user"}, {"content", content}}}}
+    };
+    if (thinkingBudget > 0) {
+        body.insert("thinking", QJsonObject{
+            {"type", "enabled"},
+            {"budget_tokens", thinkingBudget}
+        });
+    }
+
+    QNetworkRequest apiRequest{QUrl("https://api.anthropic.com/v1/messages")};
+    apiRequest.setRawHeader("x-api-key", request.apiKey.toUtf8());
+    apiRequest.setRawHeader("anthropic-version", "2023-06-01");
+    apiRequest.setRawHeader("anthropic-beta", "files-api-2025-04-14");
+    apiRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    const auto apiResult = performJsonRequest(manager, apiRequest, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    if (!apiResult.error.isEmpty() || apiResult.statusCode >= 300) {
+        return makeErrorResponse(request, providerRequestFailure(request, "Anthropic", "Messages API", apiResult));
+    }
+
+    const auto json = QJsonDocument::fromJson(apiResult.body).object();
+    response.success = true;
+    response.content = parseFirstText(json.value("content"));
+    const auto usage = json.value("usage").toObject();
+    response.usedTokens = usage.value("input_tokens").toInt() + usage.value("output_tokens").toInt();
+    const int inputTokens = usage.value("input_tokens").toInt();
+    const int outputTokens = usage.value("output_tokens").toInt();
+    response.estimatedCost = estimateAnthropicCost(request.model, inputTokens, outputTokens);
+    return response;
+}
+
+} // namespace
+
+class ProviderGatewayWorker final : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit ProviderGatewayWorker(QObject *parent = nullptr)
+        : QObject(parent)
+    {
+    }
+
+public slots:
+    void process(const amt::ProviderRequest &request)
+    {
+        if (!m_manager) {
+            m_manager = new QNetworkAccessManager(this);
+        }
+
+        amt::ProviderResponse response;
+        // Issue #18: Single-retry on transient server errors
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            switch (request.provider) {
+            case amt::ProviderKind::OpenAI:
+                response = callOpenAi(*m_manager, request);
+                break;
+            case amt::ProviderKind::Gemini:
+                response = callGemini(*m_manager, request);
+                break;
+            case amt::ProviderKind::Anthropic:
+                response = callAnthropic(*m_manager, request);
+                break;
+            }
+        if (response.success || attempt >= 1) break;
+            const bool transient = response.errorMessage.contains("429")
+                                || response.errorMessage.contains("408")
+                                || response.errorMessage.contains("500")
+                                || response.errorMessage.contains("502")
+                                || response.errorMessage.contains("503")
+                                || response.errorMessage.contains("network=timeout", Qt::CaseInsensitive)
+                                || response.errorMessage.contains("networkCode=5", Qt::CaseInsensitive);
+            if (!transient) break;
+            QThread::msleep(3000);
+        }
+
+        if (response.success) {
+            if (response.content.trimmed().isEmpty()) {
+                response.success = false;
+                response.errorMessage = "The provider returned an empty response.";
+            } else {
+                enrichParsedSignals(request, response);
+            }
+        }
+
+        emit responseReady(response);
+    }
+
+signals:
+    void responseReady(const amt::ProviderResponse &response);
+
+private:
+    QNetworkAccessManager *m_manager = nullptr;
+};
+
+ProviderGateway::ProviderGateway(QObject *parent)
+    : QObject(parent)
+{
+    qRegisterMetaType<amt::ProviderRequest>();
+    qRegisterMetaType<amt::ProviderResponse>();
+}
+
+ProviderGateway::~ProviderGateway()
+{
+}
+
+void ProviderGateway::setCredentialStore(CredentialStore *credentialStore)
+{
+    m_credentialStore = credentialStore;
+}
+
+void ProviderGateway::sendAsync(const ProviderRequest &request)
+{
+    ProviderRequest hydratedRequest = request;
+    if (hydratedRequest.apiKey.isEmpty() && m_credentialStore) {
+        hydratedRequest.apiKey = m_credentialStore->loadApiKey(request.provider);
+    }
+    if (hydratedRequest.apiKey.trimmed().isEmpty()) {
+        emit responseReady(makeErrorResponse(request,
+                                             QString("%1 request blocked before sending | model=%2 | keyPresent=no | stage=missing API key")
+                                                 .arg(providerKindToString(request.provider),
+                                                      request.model.trimmed().isEmpty() ? "<empty>" : request.model)));
+        return;
+    }
+
+    // Spawn a dedicated thread per request so Research-phase calls run in parallel.
+    auto *thread = new QThread();
+    auto *worker = new ProviderGatewayWorker();
+    worker->moveToThread(thread);
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    connect(worker, &ProviderGatewayWorker::responseReady, this, &ProviderGateway::responseReady, Qt::QueuedConnection);
+    // Quit the thread immediately after the response is emitted (DirectConnection runs on worker thread).
+    connect(worker, &ProviderGatewayWorker::responseReady, thread, &QThread::quit, Qt::DirectConnection);
+    QMetaObject::invokeMethod(worker, "process", Qt::QueuedConnection, Q_ARG(amt::ProviderRequest, hydratedRequest));
+    thread->start();
+}
+
+} // namespace amt
+
+#include "provider_gateway.moc"

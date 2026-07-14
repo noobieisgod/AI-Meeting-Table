@@ -1,0 +1,820 @@
+﻿**AI Meeting Table V1 Spec**
+
+
+`AI Meeting Table` is a native Windows desktop app, intended to be built in C++, that lets multiple AI models collaborate around a virtual meeting table to solve a user task. The app is not a generic multi-chat client. Its core identity is a structured, role-based, phase-driven workflow where multiple AI participants research, discuss, produce an artifact, review it, and then deliver a final result under enforced authority rules.
+
+
+The app’s metaphor is a real meeting table. Each AI occupies a seat. The app controls who can speak, who has authority during each phase, and when the session stops. The user watches the process, adds materials, tunes budget and timing, and receives the final output.
+
+
+**Product Vision**
+The goal of the app is to make AI collaboration visible, structured, and controllable. Instead of one model doing everything, multiple models contribute in defined phases. The app should feel like a live strategic meeting, not like several chat tabs.
+
+
+The product should emphasize:
+- Structured collaboration over free-form chatter
+- Native Windows feel
+- Clear role authority
+- Predictable cost and budget management
+- Strong visibility into process
+- Safe, non-agentic operation on the user’s computer
+
+
+**V1 Scope**
+Included in V1:
+- Native Windows desktop app in C++
+- Multiple meeting tables
+- Left sidebar for navigation/search/new table
+- Center meeting table UI
+- Right transcript UI
+- Optional event log UI
+- Up to eight seats per table
+- Empty seats allowed
+- Support for OpenAI, Google Gemini, and Anthropic
+- User-provided API keys
+- Role assignment
+- Five workflow phases
+- Adjustable timers and stop controls
+- Budget manager
+- Shared artifact model
+- Incremental context updates
+- Skip-turn support
+- Simple coding support
+- No local file changes by AI
+
+
+Explicitly out of scope for V1:
+- MCP support
+- Agentic coding
+- Local terminal execution
+- Autonomous file edits
+- Plugins/extensions
+- Browser/tool execution by models
+- Enterprise/team features
+- Cloud sync unless added later
+
+
+**Supported Providers and Model Positioning**
+Provider support in V1 is limited to:
+- OpenAI
+- Google Gemini
+- Anthropic
+
+
+The user may assign supported models from these providers to seats. The app should present these as seat participants, not as interchangeable back-end endpoints. Provider-specific behavior should be abstracted behind a common internal model interface.
+
+
+The UI may show provider icons or model badges, but the conceptual participant is the seated AI.
+
+
+**Core Concepts**
+`Meeting Table`
+- A single collaborative session
+- Equivalent to a chat/workspace
+- Has a name
+- Has its own seats, roles, transcript, artifact, settings, and log
+
+
+`Seat`
+- A participant slot around the table
+- Maximum of eight seats per table
+- May be empty
+- Holds one assigned model
+
+
+`Role`
+- Special authority assigned to a seat
+- One role may map to one seat
+- Roles influence app behavior and prompt framing
+
+
+`Artifact`
+- The official work product of the session
+- Can be a report, plan, summary, code output, analysis, or other deliverable
+- Evolves across phases
+- Has one current official version
+
+
+`Round`
+- A cycle of speaking/acting within a phase
+
+
+`Phase`
+- One of the five workflow stages
+- Controls who can see what, who can speak, and how outputs are used
+
+
+`Budget Policy`
+- User-defined limits for the session
+- Enforced by the budget manager
+
+
+`Stop Rules`
+- User-defined hard stops plus authority-based early stopping by the final decision maker
+
+
+**Role System**
+V1 roles:
+- Final Decision Maker
+- Lead Planner
+- Lead Executioner
+- Lead Quality Control Checker
+
+
+Every meeting table must have exactly one `Final Decision Maker`.
+
+
+A table may optionally have:
+- One `Lead Planner`
+- One `Lead Executioner`
+- One `Lead Quality Control Checker`
+
+
+If a lead role is unassigned, the phase still runs, but the app should fall back to general participant behavior without that phase-specific leadership boost.
+
+
+**Final Decision Maker**
+This is the highest authority in the session. Its authority is enforced by app logic, not left to informal model behavior.
+
+
+Rules:
+- Must exist on every table
+- Cannot participate in normal discussion
+- Can read what other AIs say
+- Can review the artifact and phase outcomes
+- Can issue judgments through app-controlled decision actions
+- Has authority to stop a phase when the result is good enough
+- Has final authority in unresolved disagreements
+- Must present the final product to the user
+
+
+Behavioral design intent:
+- Collaborative, not domineering
+- Should consider other models’ input seriously
+- Must not rewrite the project into its own personal vision without cause
+- Must still retain absolute authority if a conflict remains unresolved
+
+
+The app should enforce this role visually and behaviorally.
+
+
+**Lead Planner**
+Authority focus:
+- Elevated influence during planning
+- Its recommendations should carry extra weight in unresolved planning disagreements
+- The final decision maker should tend to favor its view during planning unless another model presents a stronger case
+
+
+**Lead Executioner**
+Authority focus:
+- Owns the official artifact during execution
+- Produces the main working draft/output
+- Other models may advise, but the execution artifact is authored through this role in the execution phase
+
+
+**Lead Quality Control Checker**
+Authority focus:
+- Elevated influence during quality control
+- Its review comments should carry extra weight when reliability/correctness are debated
+- The final decision maker should tend to favor its concerns unless another model makes a stronger case
+
+
+**Authority Enforcement**
+Authority must be implemented in orchestration rules, not only in prompts.
+
+
+Enforcement principles:
+- The final decision maker is the sole final arbiter
+- Lead roles have phase-specific priority
+- Conflicts that persist after discussion are resolved by app-mediated judgment
+- The artifact cannot be silently replaced by non-owning participants
+- The final decision maker does not “debate” inside the general flow; it rules on outcomes
+
+
+Prompt wording can reinforce authority, but the system must not depend on prompt obedience alone.
+
+
+**Workflow Phases**
+V1 uses five phases:
+
+
+1. `Research`
+- Each AI works independently
+- No model-to-model collaboration
+- Each model receives the user task and relevant context
+- Each model returns its own findings or approach
+- Final decision maker does not speak
+
+
+2. `Planning`
+- Each model presents research
+- Models may discuss, compare, and challenge each other
+- Lead planner has elevated authority
+- Final decision maker reads only
+- At end of planning, the app prepares a candidate strategy summary
+
+
+3. `Execution`
+- Lead executioner produces the official output/draft
+- Other models may provide targeted input in turn, depending on session rules
+- The artifact is updated through this phase
+- Final decision maker reads only
+
+
+4. `Quality Control`
+- Participants review the artifact for correctness, reliability, and quality
+- Lead quality control checker has elevated authority
+- Models may suggest revisions or approve
+- Final decision maker reads only
+
+
+5. `Present`
+- Final decision maker reviews the full discussion record and artifact
+- Final decision maker either:
+  - Approves and presents
+  - Requests another execution/QC loop
+  - Stops due to policy or quality threshold
+- The final presentation is delivered to the user by this role
+
+
+**Execution / QC Loop**
+Execution and quality control may repeat until one of the following occurs:
+- Final decision maker approves the artifact as good enough
+- User-configured hard stop is hit
+- User manually stops the session
+
+
+This loop is the app’s main iterative refinement mechanism. It should be tightly budgeted and visibly tracked.
+
+
+**Turn Structure**
+To reduce chaos, V1 should use explicit turn-based behavior.
+
+
+Recommended turn model:
+- Fixed turn order per phase
+- Each AI gets one chance to act per round
+- Each AI may either speak or skip
+- The app records the action
+- The phase ends when all required participants have acted or the phase stop condition is met
+
+
+The final decision maker does not take normal turns in research, planning, execution, or quality control.
+
+
+**Skip Behavior**
+Any participating AI may skip its turn if it has nothing meaningful to add.
+
+
+Skip behavior should be:
+- Explicit
+- Logged
+- Visible in the UI
+- Supported in all normal discussion phases
+
+
+This is important for reducing noise and token waste.
+
+
+**Artifact Model**
+Each meeting table has one official shared artifact.
+
+
+Artifact principles:
+- The artifact is the session’s current working product
+- It may be text, code, plan, report, summary, research memo, or similar
+- It persists across phases
+- It is visible to the app and considered in future rounds
+- It has one current official state at a time
+
+
+Artifact ownership by phase:
+- Research: no artifact ownership change required; contributions are findings
+- Planning: planning summary may be generated
+- Execution: lead executioner controls the official working draft
+- Quality control: reviewers do not silently overwrite; they propose issues/revisions
+- Present: final decision maker approves/presents the final state
+
+
+**Incremental Context Repository**
+The app should maintain a session repository of user-supplied and session-generated materials.
+
+
+Rules:
+- Previously known context remains tracked by the app
+- Newly added user materials are queued
+- Only new additions are introduced into the next round
+- New materials are not injected mid-round
+- User additions become eligible after the current round ends
+
+
+This supports lower token usage and cleaner phase transitions.
+
+
+**Simple Coding Support**
+V1 supports simple coding assistance only.
+
+
+Allowed examples:
+- Analyze a small file or folder
+- Explain code structure
+- Suggest edits
+- Generate small code outputs
+- Review code for quality or bugs
+- Compare implementation approaches
+
+
+Not allowed:
+- No file writes to the user’s computer
+- No autonomous repo modification
+- No terminal commands
+- No environment/tool execution
+- No agentic coding systems like Codex-style operation
+
+
+All coding help remains text-based inside the app.
+
+
+**Budget Manager**
+The budget manager controls session pace and hard limits. It should be app-controlled, not delegated entirely to model behavior.
+
+
+User-tunable budget settings should include:
+- Max tokens per phase
+- Max total tokens per table/session
+- Max rounds
+- Max total cost
+- Per-phase time allowance
+- Session hard timeout
+
+
+The budget manager should:
+- Track usage by seat, phase, and session
+- Adjust pacing based on remaining budget
+- Prevent budget overrun
+- Surface usage clearly in the UI
+- Signal when a phase is approaching a stop threshold
+
+
+The final decision maker may stop a phase early if it judges the result sufficient, but it may not override hard stops imposed by the app.
+
+
+**Stop Rules**
+Stop rules are user-controlled and tunable.
+
+
+Types of stop rules:
+- Max rounds reached
+- Max token budget reached
+- Max cost reached
+- Per-phase time reached
+- Session time reached
+- Manual user stop
+- Final decision maker early approval
+
+
+Rules:
+- Hard stops are absolute
+- Final decision maker may stop early for sufficiency
+- Final decision maker may not ignore app-enforced hard stops
+- Stop progress should be visible in the UI
+
+
+**UI Overview**
+The app has a three-region layout.
+
+
+Left sidebar:
+- Meeting table list
+- New meeting table action
+- Search by meeting table name
+
+
+Center panel:
+- Main meeting table visualization
+- Session status and workflow overview
+
+
+Right sidebar:
+- Transcript of what each AI said
+- Optional event log view
+
+
+This is the core information architecture of the app.
+
+
+**Left Sidebar**
+Purpose:
+- Session navigation
+- Session creation
+- Session lookup
+
+
+Contents:
+- Search field
+- List of meeting tables
+- New meeting table button
+
+
+Behavior:
+- Selecting a meeting table loads that session
+- Search filters by table name
+- Table names should be user-editable
+- The list should be fast to scan and stable
+
+
+Optional useful metadata in the list:
+- Current phase
+- Whether session is active
+- Last updated time
+
+
+**Center Panel**
+The center is the visual and operational heart of the app.
+
+
+Main elements:
+- Oval meeting table graphic
+- Up to eight square seats placed around it
+- Provider/model icon in each occupied seat
+- Empty visual placeholder for unused seats, if desired
+- Distinct styling for final decision maker seat
+- Highlight for currently active AI
+
+
+Status information displayed in the center:
+- Current phase
+- Current round
+- Currently acting AI
+- Budget usage
+- Session time
+- Stop-rule progress
+
+
+This area should be informative, not merely decorative.
+
+
+Recommended visual states:
+- Idle
+- Speaking
+- Skipped
+- Waiting
+- Decision pending
+- Final decision maker reviewing
+- Hard stop reached
+- Session complete
+
+
+Seat badges should indicate:
+- Provider/model
+- Assigned role if any
+
+
+The final decision maker seat should be visually unique and clearly non-discussion-oriented.
+
+
+**Right Sidebar: Transcript**
+The transcript is the primary textual record of the session.
+
+
+It should show:
+- What each AI said
+- Phase transitions in context
+- Final decision maker rulings
+- Final presentation
+
+
+Transcript characteristics:
+- Scrollable
+- Read-only during playback unless the UI supports user notes
+- Grouped clearly enough that users can follow the session flow
+- Better suited to meaning/content than operational auditing
+
+
+Final decision maker transcript entries should be visually distinct because they are rulings, not ordinary discussion posts.
+
+
+**Optional Event Log**
+The user should be able to show or hide the event log.
+
+
+Purpose:
+- Show what happened, not what was said
+- Provide operational transparency
+- Help users follow timing and orchestration
+
+
+Each log event must include a timestamp.
+
+
+Required V1 log event types:
+- Session started
+- Phase started
+- AI spoke
+- AI skipped
+- Phase ended
+- Final decision made
+- Session stopped
+
+
+For `AI spoke`, the log should show only which AI spoke, not the actual content.
+
+
+The log should be:
+- Toggleable
+- Compact
+- Read-only
+- Timestamped
+- Possible to filter by phase in a later iteration
+
+
+**Meeting Table Creation**
+Creating a new meeting table should let the user define:
+- Table name
+- Seats/models
+- Final decision maker
+- Optional lead roles
+- Budget policy
+- Stop rules
+- Default phase timings
+
+
+Validation rules:
+- Every table must have exactly one final decision maker
+- Seat count cannot exceed eight
+- Assigned roles cannot conflict on the same logical slot unless intentionally allowed by product rules
+- A table can start with unfilled seats
+
+
+**Session Behavior**
+A meeting session should proceed like this:
+1. User selects or creates a table
+2. User enters a task and optionally adds materials
+3. App enters research phase
+4. Each eligible AI acts or skips
+5. App advances to planning
+6. Planning round(s) occur
+7. App enters execution
+8. Lead executioner produces the current artifact
+9. App enters quality control
+10. Review occurs
+11. Final decision maker judges outcome
+12. If approved, app presents result
+13. If not approved and budget allows, loop execution/QC again
+14. If hard stop is reached, app stops and surfaces outcome
+
+
+**Behavioral Rules for Disagreement**
+Disagreements should be handled structurally.
+
+
+Rules:
+- Models may disagree during planning and QC
+- If a disagreement persists after a round, the app forwards the issue to the final decision maker
+- The final decision maker should generally favor the relevant lead role in that phase unless another model makes a stronger case
+- Once the final decision maker rules, the decision is authoritative
+- Participants do not continue arguing against an enforced ruling in the same decision path
+
+
+This keeps sessions from spiraling.
+
+
+**Prompting Philosophy**
+Prompting should support the system, not replace it.
+
+
+The app may inject role and phase framing such as:
+- identity
+- phase purpose
+- authority notes
+- artifact context
+- token discipline expectations
+- skip instructions
+
+
+But critical behavior must still be enforced by:
+- turn order
+- visibility restrictions
+- artifact ownership
+- role-based routing
+- hard stop logic
+- final decision gating
+
+
+**Data Model Outline**
+A clean internal model for V1 might include:
+
+
+`MeetingTable`
+- id
+- name
+- created_at
+- updated_at
+- seat assignments
+- role assignments
+- current phase
+- current round
+- active artifact
+- transcript history
+- event log
+- budget settings
+- stop settings
+- session status
+
+
+`Seat`
+- id
+- table_id
+- position
+- provider
+- model
+- role
+- occupied
+
+
+`Artifact`
+- id
+- table_id
+- type
+- current_content
+- version
+- updated_at
+
+
+`TranscriptEntry`
+- id
+- table_id
+- phase
+- round
+- speaker_seat_id
+- entry_type
+- content
+- timestamp
+
+
+`LogEvent`
+- id
+- table_id
+- phase
+- round
+- event_type
+- actor_seat_id optional
+- timestamp
+- metadata
+
+
+`BudgetPolicy`
+- token_limits
+- cost_limits
+- round_limits
+- time_limits
+
+
+`StopPolicy`
+- hard_stop_conditions
+- early_stop_allowed_by_final_decision_maker
+
+
+`QueuedInput`
+- user-added material not yet injected
+- target session
+- added_at
+- eligible_round
+
+
+**Provider Abstraction**
+The app should internally normalize provider differences behind a common interface.
+
+
+The common interface should handle:
+- authentication with user API key
+- send message/request
+- receive response
+- token/accounting metadata
+- provider/model identity
+- error handling
+- retry policy
+
+
+The rest of the app should not care whether a seat is backed by OpenAI, Gemini, or Claude beyond display and provider-specific settings.
+
+
+**API Key Handling**
+The app uses the user’s API keys to call provider servers.
+
+
+Security expectations:
+- Keys should be stored securely on Windows
+- Keys should not be written plainly into casual app state if avoidable
+- Provider credentials should be handled separately
+- The user must understand which seats use which provider credentials
+
+
+**Safety and Trust Boundaries**
+V1 should have a conservative safety posture.
+
+
+Rules:
+- Models cannot modify local files
+- Models cannot execute local commands
+- Models cannot browse or use external tools unless explicitly added in a future version
+- The app is a collaboration environment, not an automation runtime
+
+
+This is important for trust and scope control.
+
+
+**Design Language Ideas**
+The UI should feel intentional and professional, not gimmicky.
+
+
+Recommended tone:
+- Modern Windows native feel
+- Calm strategic workspace aesthetic
+- The meeting table should be visually central and distinctive
+- Seat highlights should be meaningful, not flashy
+- Role badges should be easy to scan
+- Final decision maker visual treatment should signal authority and restraint
+
+
+Possible visual themes:
+- Neutral base with one accent color for active turns
+- Distinct but subtle provider colors/icons
+- Gold or reserved accent for final decision maker
+- Phase chip/status strip near the table center
+- Clear separation between transcript and event log
+
+
+The table UI should be memorable, but usability must win over novelty.
+
+
+**UX Priorities**
+V1 UX should optimize for:
+- Knowing who is active
+- Understanding current phase
+- Tracking budget/stop state
+- Following discussion content
+- Trusting that authority rules are enforced
+- Adding user materials without confusion
+- Understanding when new materials will be considered
+
+
+Users should never feel lost about:
+- What phase the app is in
+- Why a session stopped
+- Who made a decision
+- Whether the artifact changed
+- Whether new input has been queued or processed
+
+
+**Recommended V1 Defaults**
+To help users succeed, the app should start with sensible defaults:
+- 3 to 4 seats suggested
+- One final decision maker required
+- Timed phases enabled by default
+- Reasonable budget caps
+- Execution/QC loop capped at a moderate number of rounds
+- Event log hidden by default but easy to open
+- Final decision maker visually distinct from the start
+
+
+**MVP Success Criteria**
+V1 is successful if users can:
+- Create multiple meeting tables
+- Assign up to eight AI participants
+- Assign one final decision maker
+- Run the five-phase workflow
+- Watch active turns at the table
+- Read the transcript
+- View the event log
+- Manage budget and stop rules
+- Add new materials between rounds
+- Receive a final output with visible authority structure
+
+
+**Future Expansion Ideas**
+Not for V1, but compatible with the architecture:
+- MCP support
+- Attachments with richer artifact typing
+- More advanced coding workflows
+- Export of transcript, log, and artifact
+- Saved role presets
+- Team collaboration
+- More analytics
+- Replay mode for past sessions
+- Stronger conflict-resolution UI
+- Custom seat layouts or themes
+
+
+**Build Guidance Summary**
+The app should be built as a workflow orchestration system with a meeting-table interface, not as a standard chat app with decorative visuals. The most important design truths are:
+- one table equals one managed collaboration session
+- one final decision maker is mandatory
+- final decision maker reads and judges but does not participate in normal discussion
+- authority is enforced by the app
+- the center table UI must show live workflow state
+- the right side carries transcript and optional log
+- the artifact is shared and official
+- context updates are incremental
+- budget and stop rules are first-class controls
+- V1 stays safe by avoiding agentic local actions
