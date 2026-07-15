@@ -12,7 +12,7 @@ Tables presents existing meeting tables, their state, participants, and recent a
 
 ## Session
 
-Session keeps the transcript as the primary workspace. The supporting column contains telemetry, Seats, Attachments, Generation, and Artifacts. The composer provides a taller multiline message field with compact attachment and Send controls.
+Session keeps the transcript as the primary workspace. The supporting column contains telemetry, Seats, Attachments, Generation, and Artifacts. The composer provides a taller multiline message field with compact attachment and Send controls. It grows to a practical limit, then scrolls internally so long instructions remain editable without hiding the actions.
 
 The primary session action maps backend state to one visible control:
 
@@ -22,9 +22,13 @@ The primary session action maps backend state to one visible control:
 
 Stop is a separate action. Stopping a previously run session preserves its prior-run state, so the next valid primary action is Continue rather than Start.
 
-Seat cards open the seat editor. Each seat stores a name, role, provider, model, and accent color through the controller model. Changing a seat color updates existing transcript message accents immediately. Messages also retain speaker names and roles, so color is not the only identifier. Invalid color values use a visible fallback.
+Seat cards open the seat editor. Newly added seats are active by default, so Add Seat no longer exposes the stored occupied flag. Each seat stores a name, role, provider, model, and accent color through the controller model. The normal editor offers Blue, Cyan, Green, Amber, Orange, Red, Purple, and Pink with named swatches. Existing custom hexadecimal colors remain visible as Custom until the user selects a preset. Changing a seat color updates existing transcript message accents immediately. Messages also retain speaker names and roles, so color is not the only identifier. Invalid color values use a visible fallback.
 
-Attachments use the existing picker and backend import path. Android content is copied into app-private storage before hashing and upload. The backend owns attachment size and file-count safeguards. Generation and artifact controls use existing controller operations. Provider outcome-unknown states are shown without automatic replay.
+Attachments use the existing picker beside the composer and the backend import path. The Session attachment panel lists imported files and no longer duplicates the import action. Android content is copied into app-private storage before hashing and upload. The backend owns attachment size and file-count safeguards. As a post-test enhancement, tapping a completed attachment asks Android to open a protected, read-only content URI through a compatible application. Raw file URIs and unrestricted filesystem paths are not exposed. Generation and artifact controls use existing controller operations. Provider outcome-unknown states are shown without automatic replay.
+
+Provider adapters accept only provider-specific user-visible response fields. OpenAI output text and supported refusal blocks are extracted explicitly. Anthropic text blocks are extracted while thinking, signatures, metadata, and other non-visible blocks are ignored. A malformed response or a response without visible content is recorded as a redacted failure and pauses the recoverable session instead of entering opaque data into the transcript or completing the phase. Outcome-unknown requests remain paused for explicit user continuation and are never automatically replayed.
+
+Usage telemetry prefers final provider-reported input and output counts. When usage must be estimated, the token display says Approx. Cached or otherwise incomplete pricing makes the cost display unavailable rather than presenting false precision. Known partial usage from a definite provider failure is retained once, while outcome-unknown usage remains unconfirmed. Backend hard stops continue to own enforcement.
 
 ## Event Log
 
@@ -54,6 +58,7 @@ Appearance changes update the interface without replacing active session state. 
 - Seat identity, session state, validation, and provider status include text in addition to color.
 - Light and dark palettes maintain readable foreground, surface, focus, and seat-accent combinations.
 - Android Back closes a nested Settings subsection before leaving Settings. Dialogs provide explicit close or save controls.
+- Android top and bottom surfaces extend to the physical edges while their controls use Qt safe-area margins for status bars, cutouts, gesture navigation, and navigation bars.
 
 The layout targets are 360 by 800, 412 by 915, 800 by 1280, and 1280 by 800. Desktop visual inspection covered a phone-sized 423 by 891 window and a wide 1707 by 960 window. The remaining exact target sizes are covered by responsive layout rules and require device or emulator confirmation.
 
@@ -61,4 +66,8 @@ The layout targets are 360 by 800, 412 by 915, 800 by 1280, and 1280 by 800. Des
 
 Desktop Qt compilation, QML linting, controller tests, QML tests, and the full native test set are part of Phase 3 validation. On Windows, the QML test uses the native platform plugin because the offscreen plugin does not emit the required `windowShown` signal in this environment.
 
-The Android arm64 debug build configures and packages with the repository's existing Qt, SDK, NDK, Gradle, and CMake process. No emulator or connected device was available during this validation, so Android launch, hardware Back behavior, and on-screen keyboard behavior still require device smoke testing before release. Release signing, packaging, tagging, and publication are outside this phase.
+The Android arm64 debug build configures and packages with the repository's existing Qt, SDK, NDK, Gradle, and CMake process. The post-test correction build completed successfully with Qt 6.11.1 and target API 36. No emulator, AVD, or connected device was enumerated during this continuation, so Pixel 10 Pro safe-area behavior, the Android attachment chooser, hardware Back behavior, orientation changes, and on-screen keyboard behavior still require device smoke testing before release.
+
+Model catalog refresh status is provider-specific and moves through not refreshed, refreshing, updated, or refresh failed text. A failed refresh keeps the previously loaded or built-in catalog and does not expose credential data. The status is session-only because dynamic model catalogs are not persisted across launches.
+
+Fixture tests do not replace a real provider smoke test. Before release, perform one explicitly approved, low-cost request against each configured provider to confirm current production response envelopes, model identity, usage reporting, and cost presentation. Release signing, tagging, and publication are outside this phase.
