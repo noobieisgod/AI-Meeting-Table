@@ -68,7 +68,7 @@ target_compile_definitions(test_qml PRIVATE
 add_test(NAME test_qml COMMAND test_qml)
 set_tests_properties(test_qml PROPERTIES
     TIMEOUT 30
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    ENVIRONMENT "QT_QPA_PLATFORM=$<IF:$<BOOL:${WIN32}>,windows,offscreen>"
 )
 
 add_test(
