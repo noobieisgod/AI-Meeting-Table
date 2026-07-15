@@ -19,7 +19,7 @@ ApplicationWindow {
     title: "AI Meeting Table"
     color: backgroundColor
     font.family: uiFont
-    topPadding: 0
+    topPadding: topBar.height
     bottomPadding: 0
     leftPadding: 0
     rightPadding: 0
@@ -371,6 +371,8 @@ ApplicationWindow {
         checkable: true
         checked: root.selectedPage === destination
         Layout.fillWidth: true
+        Layout.minimumHeight: 48
+        Layout.preferredHeight: 48
         implicitHeight: 48
         font.bold: checked
         onClicked: root.selectedPage = destination
@@ -407,6 +409,7 @@ ApplicationWindow {
     }
 
     header: Rectangle {
+        id: topBar
         implicitHeight: 62 + root.SafeArea.margins.top
         color: root.raisedColor
         Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: root.lineColor }
