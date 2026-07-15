@@ -79,6 +79,7 @@ public:
     Q_INVOKABLE bool addAttachment(const QUrl &url);
     Q_INVOKABLE bool cancelAttachmentImport();
     Q_INVOKABLE bool removeAttachment(const QString &attachmentId);
+    Q_INVOKABLE bool openAttachment(const QString &attachmentId);
     Q_INVOKABLE bool saveApiKey(int providerIndex, const QString &apiKey);
     Q_INVOKABLE void refreshModels();
     Q_INVOKABLE void setTheme(const QString &theme);

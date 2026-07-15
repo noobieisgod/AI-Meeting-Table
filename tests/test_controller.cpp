@@ -26,6 +26,7 @@ private slots:
   void fullTranscriptTextPreservesOrderAndMetadata();
   void budgetValidationRejectsInvalidRelationships();
   void appearanceAndSeatColorAreExposed();
+  void missingAttachmentCannotBeOpened();
   void attachmentCleanupIsReferenceAndPathSafe();
   void attachmentMetadataAddedOnlyAfterSuccess();
   void tableDeletionDuringImportRemovesCompletedResult();
@@ -124,10 +125,35 @@ void ControllerTests::appearanceAndSeatColorAreExposed() {
   QCOMPARE(seats.first().toMap().value("color").toString(),
            QString("#abcdef"));
 
+  QVERIFY(controller.saveSeat(0, true, "Decision seat", 0, "", 0, 1,
+                              "#4f86c6"));
+  QCOMPARE(controller.seats().first().toMap().value("color").toString(),
+           QString("#4f86c6"));
+
   const QVariantMap safeguards = controller.attachmentSafeguards();
   QCOMPARE(safeguards.value("maximumAttachmentMiB").toLongLong(), qint64(25));
   QCOMPARE(safeguards.value("freeSpaceReserveMiB").toLongLong(), qint64(64));
   QCOMPARE(safeguards.value("noProgressTimeoutSeconds").toInt(), 60);
+}
+
+void ControllerTests::missingAttachmentCannotBeOpened() {
+  MobileAppController controller;
+  QVERIFY(controller.initialize());
+  QVERIFY(controller.createTable("Missing attachment", 1));
+  const auto handle = controller.m_context.tableHandle(controller.currentTableId());
+  QVERIFY(handle);
+
+  AttachmentRecord missing;
+  missing.attachmentId = "missing-attachment";
+  missing.displayName = "missing notes.txt";
+  missing.filePath = QDir::temp().filePath("amt-file-that-does-not-exist.txt");
+  QFile::remove(missing.filePath);
+  handle->attachments.append(missing);
+
+  QVERIFY(!controller.openAttachment(missing.attachmentId));
+  QVERIFY(controller.lastError().contains("no longer exists"));
+  QVERIFY(!controller.openAttachment("unknown-attachment"));
+  QVERIFY(controller.lastError().contains("no longer available"));
 }
 
 void ControllerTests::attachmentCleanupIsReferenceAndPathSafe() {

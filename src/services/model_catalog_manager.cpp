@@ -125,6 +125,7 @@ void ModelCatalogManager::fetchModelsAsync() {
                                    : QString{};
 
   if (!openAiKey.isEmpty()) {
+    setStatus(ProviderKind::OpenAI, "OpenAI is refreshing...", false);
     ++m_pendingRequests;
     fetchOpenAI(openAiKey, generation);
   } else {
@@ -133,6 +134,7 @@ void ModelCatalogManager::fetchModelsAsync() {
   }
 
   if (!geminiKey.isEmpty()) {
+    setStatus(ProviderKind::Gemini, "Google is refreshing...", false);
     ++m_pendingRequests;
     fetchGemini(geminiKey, generation);
   } else {
@@ -141,6 +143,7 @@ void ModelCatalogManager::fetchModelsAsync() {
   }
 
   if (!anthropicKey.isEmpty()) {
+    setStatus(ProviderKind::Anthropic, "Anthropic is refreshing...", false);
     ++m_pendingRequests;
     fetchAnthropic(anthropicKey, generation);
   } else {
@@ -201,7 +204,7 @@ void ModelCatalogManager::setFailureStatus(ProviderKind provider,
             QString("%1 refresh failed (%2); using %3 model list.")
                 .arg(providerName, reason,
                      hasPrevious ? "the previous" : "the built-in fallback"),
-            true, true);
+            false, true);
 }
 
 void ModelCatalogManager::checkCompletion(quint64 generation) {
@@ -279,7 +282,7 @@ void ModelCatalogManager::fetchOpenAI(const QString &apiKey,
                              modelCatalogForProvider(ProviderKind::OpenAI));
           m_dynamicCatalogs.insert(ProviderKind::OpenAI, models);
           setStatus(ProviderKind::OpenAI,
-                    QString("OpenAI models loaded: %1.").arg(models.size()),
+                    QString("Updated just now: %1 OpenAI models.").arg(models.size()),
                     true);
         }
       }
@@ -349,7 +352,7 @@ void ModelCatalogManager::fetchGemini(const QString &apiKey,
                              modelCatalogForProvider(ProviderKind::Gemini));
           m_dynamicCatalogs.insert(ProviderKind::Gemini, models);
           setStatus(ProviderKind::Gemini,
-                    QString("Google models loaded: %1.").arg(models.size()),
+                    QString("Updated just now: %1 Google models.").arg(models.size()),
                     true);
         }
       }
@@ -415,7 +418,7 @@ void ModelCatalogManager::fetchAnthropic(const QString &apiKey,
                              modelCatalogForProvider(ProviderKind::Anthropic));
           m_dynamicCatalogs.insert(ProviderKind::Anthropic, models);
           setStatus(ProviderKind::Anthropic,
-                    QString("Anthropic models loaded: %1.").arg(models.size()),
+                    QString("Updated just now: %1 Anthropic models.").arg(models.size()),
                     true);
         }
       }

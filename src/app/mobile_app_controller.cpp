@@ -10,6 +10,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QLocale>
+#include <QMimeDatabase>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
@@ -804,6 +806,40 @@ bool MobileAppController::removeAttachment(const QString &attachmentId)
     return true;
 }
 
+bool MobileAppController::openAttachment(const QString &attachmentId)
+{
+    const auto *state = currentState();
+    if (!state) {
+        setError("No table is selected.");
+        return false;
+    }
+    const auto attachment = std::find_if(
+        state->attachments.cbegin(), state->attachments.cend(),
+        [&attachmentId](const AttachmentRecord &record) {
+            return record.attachmentId == attachmentId;
+        });
+    if (attachment == state->attachments.cend()) {
+        setError("The attachment is no longer available.");
+        return false;
+    }
+    switch (AttachmentImportManager::openImportedAttachment(
+        attachment->filePath, attachment->displayName)) {
+    case AttachmentOpenStatus::Opened:
+        setError({});
+        return true;
+    case AttachmentOpenStatus::FileMissing:
+        setError("The imported attachment file no longer exists.");
+        break;
+    case AttachmentOpenStatus::NoCompatibleApplication:
+        setError("No compatible application can open this attachment.");
+        break;
+    case AttachmentOpenStatus::AccessDenied:
+        setError("Android could not grant access to this attachment.");
+        break;
+    }
+    return false;
+}
+
 bool MobileAppController::saveApiKey(int providerIndex, const QString &apiKey)
 {
     QString error;
@@ -818,6 +854,7 @@ bool MobileAppController::saveApiKey(int providerIndex, const QString &apiKey)
 void MobileAppController::refreshModels()
 {
     m_context.modelCatalogManager()->fetchModelsAsync();
+    emit settingsChanged();
 }
 
 void MobileAppController::setTheme(const QString &theme)
@@ -1115,8 +1152,10 @@ QVariantMap MobileAppController::tableSummary(const SessionState &state) const
     row.insert("round", state.round);
     row.insert("activeSeatId", state.activeSeatId);
     row.insert("usedTokens", state.usedTokens);
+    row.insert("usageEstimated", state.usageEstimateUsed);
     row.insert("maxTokens", state.budgetPolicy.maxTotalTokens);
     row.insert("usedCost", state.usedCost);
+    row.insert("costEstimateComplete", state.costEstimateComplete);
     row.insert("maxCost", state.budgetPolicy.maxTotalCost);
     row.insert("elapsed", formatElapsed(state.elapsedSeconds));
     row.insert("transcriptCount", state.transcript.size());
@@ -1183,9 +1222,15 @@ QVariantMap MobileAppController::transcriptSummary(const TranscriptEntry &entry)
 
 QVariantMap MobileAppController::attachmentSummary(const AttachmentRecord &attachment) const
 {
+    const QFileInfo file(attachment.filePath);
+    const QMimeType mime = QMimeDatabase().mimeTypeForFile(file);
     QVariantMap row;
     row.insert("attachmentId", attachment.attachmentId);
     row.insert("displayName", attachment.displayName);
+    row.insert("sizeBytes", file.exists() ? file.size() : 0);
+    row.insert("size", file.exists() ? QLocale().formattedDataSize(file.size()) : QString("Missing"));
+    row.insert("mimeType", mime.isValid() ? mime.name() : QString("application/octet-stream"));
+    row.insert("available", file.exists() && file.isFile());
     return row;
 }
 

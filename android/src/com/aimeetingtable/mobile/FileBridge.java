@@ -1,10 +1,14 @@
 package com.aimeetingtable.mobile;
 
 import android.content.ContentResolver;
+import android.content.ClipData;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ActivityNotFoundException;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.webkit.MimeTypeMap;
 
 import java.io.File;
 import java.io.IOException;
@@ -22,6 +26,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class FileBridge {
+    public static final int OPENED = 0;
+    public static final int FILE_MISSING = 1;
+    public static final int NO_COMPATIBLE_APPLICATION = 2;
+    public static final int ACCESS_DENIED = 3;
     private static final long WATCHDOG_POLL_MILLIS = 200L;
     private static final ConcurrentHashMap<String, ActiveOperation> ACTIVE = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> PENDING_CANCELLATIONS = new ConcurrentHashMap<>();
@@ -107,6 +115,47 @@ public final class FileBridge {
         if (!isBlank(operationId)) {
             PENDING_CANCELLATIONS.remove(operationId);
         }
+    }
+
+    public static int openPrivateFile(Context context, String path, String displayName) {
+        if (context == null || isBlank(path)) {
+            return FILE_MISSING;
+        }
+        File file = new File(path);
+        if (!file.isFile()) {
+            return FILE_MISSING;
+        }
+
+        try {
+            String mimeType = mimeType(displayName);
+            Uri uri = AttachmentContentProvider.register(context, file, displayName, mimeType);
+            Intent view = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, mimeType)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            view.setClipData(ClipData.newRawUri("AI Meeting Table attachment", uri));
+            if (view.resolveActivity(context.getPackageManager()) == null) {
+                return NO_COMPATIBLE_APPLICATION;
+            }
+            Intent chooser = Intent.createChooser(view, "Open attachment")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (!(context instanceof android.app.Activity)) {
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            }
+            context.startActivity(chooser);
+            return OPENED;
+        } catch (ActivityNotFoundException exception) {
+            return NO_COMPATIBLE_APPLICATION;
+        } catch (SecurityException | IOException exception) {
+            return ACCESS_DENIED;
+        }
+    }
+
+    private static String mimeType(String displayName) {
+        String extension = MimeTypeMap.getFileExtensionFromUrl(
+            Uri.encode(isBlank(displayName) ? "attachment" : displayName));
+        String type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+            extension == null ? "" : extension.toLowerCase());
+        return isBlank(type) ? "application/octet-stream" : type;
     }
 
     private static ImportResult performImport(Context context,

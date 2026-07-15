@@ -161,6 +161,8 @@ void ModelCatalogTests::
   QSignalSpy completed(&manager, &ModelCatalogManager::fetchCompleted);
 
   manager.fetchModelsAsync();
+  QCOMPARE(openAiStatus(manager).value("message").toString(),
+           QString("OpenAI is refreshing..."));
   manager.fetchModelsAsync();
   QTRY_COMPARE(completed.count(), 1);
   QVector<ModelCatalogEntry> catalog =
@@ -174,7 +176,7 @@ void ModelCatalogTests::
   QCOMPARE(modelCount(catalog, "gpt-new"), 1);
   const QVariantMap status = openAiStatus(manager);
   QVERIFY(status.value("fallback").toBool());
-  QVERIFY(status.value("success").toBool());
+  QVERIFY(!status.value("success").toBool());
   QVERIFY(!status.value("message").toString().contains("secret response body"));
   QVERIFY(!status.value("message").toString().contains(
       "sensitive transport detail"));

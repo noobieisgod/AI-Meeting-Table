@@ -4,6 +4,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDesktopServices>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -326,6 +327,35 @@ QString AttachmentImportManager::startImport(const QString &tableId,
     });
     thread->start();
     return operationId;
+}
+
+AttachmentOpenStatus AttachmentImportManager::openImportedAttachment(
+    const QString &filePath,
+    const QString &displayName)
+{
+    const QFileInfo file(filePath);
+    if (!file.exists() || !file.isFile()) {
+        return AttachmentOpenStatus::FileMissing;
+    }
+#ifdef Q_OS_ANDROID
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    const QJniObject path = QJniObject::fromString(file.absoluteFilePath());
+    const QJniObject name = QJniObject::fromString(displayName);
+    const jint result = QJniObject::callStaticMethod<jint>(
+        "com/aimeetingtable/mobile/FileBridge",
+        "openPrivateFile",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)I",
+        context.object<jobject>(), path.object<jstring>(), name.object<jstring>());
+    if (result < static_cast<jint>(AttachmentOpenStatus::Opened)
+        || result > static_cast<jint>(AttachmentOpenStatus::AccessDenied)) {
+        return AttachmentOpenStatus::AccessDenied;
+    }
+    return static_cast<AttachmentOpenStatus>(result);
+#else
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(file.absoluteFilePath()))
+        ? AttachmentOpenStatus::Opened
+        : AttachmentOpenStatus::NoCompatibleApplication;
+#endif
 }
 
 bool AttachmentImportManager::cancelActive()

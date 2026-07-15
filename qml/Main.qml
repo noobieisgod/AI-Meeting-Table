@@ -19,6 +19,10 @@ ApplicationWindow {
     title: "AI Meeting Table"
     color: backgroundColor
     font.family: uiFont
+    topPadding: 0
+    bottomPadding: 0
+    leftPadding: 0
+    rightPadding: 0
 
     property var tableRows: []
     property var currentTable: ({})
@@ -34,6 +38,17 @@ ApplicationWindow {
     property int selectedSettingsPage: 0
     property int editingSeatIndex: -1
     property var editingSeat: ({})
+    property bool addingSeat: false
+    readonly property var seatColorPresets: [
+        { name: "Blue", value: "#4f86c6" },
+        { name: "Cyan", value: "#2f9eaa" },
+        { name: "Green", value: "#3f956f" },
+        { name: "Amber", value: "#b98220" },
+        { name: "Orange", value: "#c66a2b" },
+        { name: "Red", value: "#bd5454" },
+        { name: "Purple", value: "#8169b3" },
+        { name: "Pink", value: "#b45582" }
+    ]
     property int settingsGeneration: 0
     property string artifactPreviewTitle: ""
     property string artifactPreviewBody: ""
@@ -173,14 +188,37 @@ ApplicationWindow {
     function openSeatEditor(index, adding) {
         editingSeatIndex = index;
         editingSeat = seatRows[index] || ({});
+        addingSeat = adding;
         occupiedSwitch.checked = adding ? true : Boolean(editingSeat.occupied);
         seatNameField.text = adding ? "" : editingSeat.displayName || "";
         providerCombo.currentIndex = editingSeat.providerIndex || 0;
         effortCombo.currentIndex = editingSeat.effortIndex || 0;
         roleCombo.currentIndex = editingSeat.roleIndex || 0;
-        colorCombo.currentIndex = Math.max(0, colorCombo.model.indexOf(editingSeat.color || "#49bd99"));
+        var selectedColor = adding ? seatColorPresets[index % seatColorPresets.length].value : editingSeat.color || seatColorPresets[0].value;
+        colorCombo.model = seatColorsFor(selectedColor);
+        colorCombo.currentIndex = seatColorIndex(colorCombo.model, selectedColor);
         refreshModelCombo(editingSeat.modelId || "");
         seatDialog.open();
+    }
+
+    function seatColorsFor(selectedColor) {
+        var options = [];
+        var found = false;
+        for (var i = 0; i < seatColorPresets.length; i++) {
+            options.push(seatColorPresets[i]);
+            found = found || seatColorPresets[i].value.toLowerCase() === selectedColor.toLowerCase();
+        }
+        if (!found && /^#[0-9a-fA-F]{6}$/.test(selectedColor)) {
+            options.push({ name: "Custom", value: selectedColor.toLowerCase() });
+        }
+        return options;
+    }
+
+    function seatColorIndex(options, selectedColor) {
+        for (var i = 0; i < options.length; i++) {
+            if (options[i].value.toLowerCase() === selectedColor.toLowerCase()) return i;
+        }
+        return 0;
     }
 
     function openAddSeat() {
@@ -369,14 +407,14 @@ ApplicationWindow {
     }
 
     header: Rectangle {
-        implicitHeight: 62
+        implicitHeight: 62 + root.SafeArea.margins.top
         color: root.raisedColor
-        border.color: root.lineColor
-        border.width: 1
+        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: root.lineColor }
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
+            anchors.topMargin: root.SafeArea.margins.top
+            anchors.leftMargin: 16 + root.SafeArea.margins.left
+            anchors.rightMargin: 16 + root.SafeArea.margins.right
             spacing: 12
             ColumnLayout {
                 spacing: 0
@@ -412,6 +450,8 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.leftMargin: root.SafeArea.margins.left
+            Layout.rightMargin: root.SafeArea.margins.right
             spacing: 0
 
             Rectangle {
@@ -570,8 +610,8 @@ ApplicationWindow {
                                     { label: "Status", value: root.currentTable.phase || "Idle" },
                                     { label: "Elapsed", value: root.currentTable.elapsed || "00:00" },
                                     { label: "Round", value: String(root.currentTable.round || 0) },
-                                    { label: "Tokens", value: (root.currentTable.usedTokens || 0) + " / " + (root.currentTable.maxTokens || 0) },
-                                    { label: "Cost", value: "$" + Number(root.currentTable.usedCost || 0).toFixed(2) + " / $" + Number(root.currentTable.maxCost || 0).toFixed(2) }
+                                    { label: "Tokens", value: (root.currentTable.usageEstimated ? "Approx. " : "") + (root.currentTable.usedTokens || 0) + " / " + (root.currentTable.maxTokens || 0) },
+                                    { label: root.currentTable.costEstimateComplete === false ? "Cost estimate" : "Cost", value: root.currentTable.costEstimateComplete === false ? "Unavailable / $" + Number(root.currentTable.maxCost || 0).toFixed(2) : "$" + Number(root.currentTable.usedCost || 0).toFixed(2) + " / $" + Number(root.currentTable.maxCost || 0).toFixed(2) }
                                 ]
                                 delegate: Rectangle {
                                     id: metric
@@ -707,14 +747,24 @@ ApplicationWindow {
                                         Layout.bottomMargin: 12
                                         spacing: 7
                                         Label { text: "Message to the table"; color: root.textColor; font.bold: true }
-                                        TextArea {
-                                            id: composer
+                                        ScrollView {
+                                            id: composerScroll
                                             Layout.fillWidth: true
-                                            Layout.preferredHeight: 116
-                                            placeholderText: "Add instructions, context, or a follow up question"
-                                            wrapMode: TextArea.Wrap
-                                            color: root.textColor
-                                            background: Rectangle { color: root.backgroundColor; border.color: composer.activeFocus ? root.accentColor : root.lineColor; border.width: composer.activeFocus ? 2 : 1; radius: 6 }
+                                            Layout.preferredHeight: Math.min(176, Math.max(104, composer.contentHeight + 24))
+                                            clip: true
+                                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                            ScrollBar.vertical.policy: composer.contentHeight + 24 > composerScroll.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                                            TextArea {
+                                                id: composer
+                                                width: composerScroll.availableWidth
+                                                implicitHeight: Math.max(composerScroll.availableHeight, contentHeight + topPadding + bottomPadding)
+                                                placeholderText: "Add instructions, context, or a follow up question"
+                                                wrapMode: TextEdit.WrapAnywhere
+                                                color: root.textColor
+                                                selectByMouse: true
+                                                Accessible.name: "Message to the table"
+                                                background: Rectangle { color: root.backgroundColor; border.color: composer.activeFocus ? root.accentColor : root.lineColor; border.width: composer.activeFocus ? 2 : 1; radius: 6 }
+                                            }
                                         }
                                         RowLayout {
                                             Layout.fillWidth: true
@@ -827,16 +877,21 @@ ApplicationWindow {
                                         RowLayout {
                                             Layout.fillWidth: true
                                             Label { text: "Attachments"; color: root.textColor; font.bold: true; font.pixelSize: 16; Layout.fillWidth: true }
-                                            Button { text: root.appController.attachmentImportInProgress ? "Cancel" : "Add"; implicitHeight: 38; onClicked: root.appController.attachmentImportInProgress ? root.appController.cancelAttachmentImport() : attachmentDialog.open() }
                                         }
-                                        Label { visible: root.attachmentRows.length === 0 && !root.appController.attachmentImportInProgress; text: "No attachments selected."; color: root.mutedColor }
+                                        Label { visible: root.attachmentRows.length === 0 && !root.appController.attachmentImportInProgress; text: "Use the attachment button beside the message composer."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
                                         Repeater {
                                             model: root.attachmentRows
                                             delegate: RowLayout {
                                                 id: attachmentRow
                                                 required property var modelData
                                                 Layout.fillWidth: true
-                                                Label { text: attachmentRow.modelData.displayName; color: root.textColor; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 2
+                                                    Label { text: attachmentRow.modelData.displayName; color: root.textColor; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                                    Label { text: attachmentRow.modelData.size + " | " + attachmentRow.modelData.mimeType; color: root.mutedColor; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                                                }
+                                                Button { text: "Open"; flat: true; enabled: attachmentRow.modelData.available; Accessible.name: "Open attachment " + attachmentRow.modelData.displayName; onClicked: { if (!root.appController.openAttachment(attachmentRow.modelData.attachmentId)) root.showErrorIfNeeded(); } }
                                                 Button { text: "Remove"; flat: true; Accessible.name: "Remove attachment " + attachmentRow.modelData.displayName; onClicked: { if (!root.appController.removeAttachment(attachmentRow.modelData.attachmentId)) root.showErrorIfNeeded(); } }
                                             }
                                         }
@@ -866,7 +921,7 @@ ApplicationWindow {
                                             value: Number(root.currentTable.usedTokens || 0)
                                             indeterminate: root.appController.running && Number(root.currentTable.maxTokens || 0) === 0
                                         }
-                                        Label { text: (root.currentTable.usedTokens || 0) + " tokens used"; color: root.mutedColor; font.pixelSize: 11 }
+                                        Label { text: (root.currentTable.usageEstimated ? "Approximately " : "") + (root.currentTable.usedTokens || 0) + " tokens used"; color: root.mutedColor; font.pixelSize: 11 }
                                     }
                                 }
 
@@ -1091,7 +1146,7 @@ ApplicationWindow {
                                                 anchors.fill: parent
                                                 anchors.margins: 10
                                                 Label { text: modelStatusRow.modelData.provider || "Provider"; color: root.textColor; font.bold: true; Layout.fillWidth: true }
-                                                Label { text: modelStatusRow.modelData.status || "Not refreshed"; color: root.mutedColor; wrapMode: Text.Wrap }
+                                                Label { text: modelStatusRow.modelData.message || "Not refreshed"; color: root.mutedColor; wrapMode: Text.Wrap }
                                             }
                                         }
                                     }
@@ -1183,13 +1238,15 @@ ApplicationWindow {
         Rectangle {
             visible: !root.desktopLayout
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 64 + root.SafeArea.margins.bottom
             color: root.raisedColor
-            border.color: root.lineColor
-            border.width: 1
+            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 1; color: root.lineColor }
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 5
+                anchors.topMargin: 5
+                anchors.bottomMargin: 5 + root.SafeArea.margins.bottom
+                anchors.leftMargin: 5 + root.SafeArea.margins.left
+                anchors.rightMargin: 5 + root.SafeArea.margins.right
                 spacing: 4
                 NavButton { text: "Tables"; destination: 0 }
                 NavButton { text: "Session"; destination: 1 }
@@ -1204,7 +1261,7 @@ ApplicationWindow {
         z: 20
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: root.desktopLayout ? 18 : 78
+        anchors.bottomMargin: root.desktopLayout ? 18 + root.SafeArea.margins.bottom : 78 + root.SafeArea.margins.bottom
         width: Math.min(parent.width - 24, toastLabel.implicitWidth + 32)
         height: 48
         radius: 6
@@ -1216,16 +1273,16 @@ ApplicationWindow {
 
     Dialog {
         id: seatDialog
-        title: root.editingSeat && root.editingSeat.occupied ? "Configure seat" : "Add Seat"
+        title: root.addingSeat ? "Add Seat" : "Configure seat"
         modal: true
         standardButtons: Dialog.Save | Dialog.Cancel
-        width: Math.min(root.width - 24, 560)
-        height: Math.min(root.height - 36, 720)
-        x: (root.width - width) / 2
-        y: Math.max(18, (root.height - height) / 2)
+        width: Math.min(root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - 24, 560)
+        height: Math.min(root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - 36, 720)
+        x: root.SafeArea.margins.left + (root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - width) / 2
+        y: root.SafeArea.margins.top + Math.max(18, (root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - height) / 2)
         onAccepted: {
             var selectedModel = modelCombo.model && modelCombo.model.length > modelCombo.currentIndex ? modelCombo.model[modelCombo.currentIndex].id : "";
-            if (!root.appController.saveSeat(root.editingSeatIndex, occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex, colorCombo.currentText)) root.showErrorIfNeeded();
+            if (!root.appController.saveSeat(root.editingSeatIndex, root.addingSeat ? true : occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex, colorCombo.currentValue)) root.showErrorIfNeeded();
         }
         contentItem: ScrollView {
             id: seatScroll
@@ -1233,22 +1290,40 @@ ApplicationWindow {
             ColumnLayout {
                 width: seatScroll.availableWidth
                 spacing: 9
-                Switch { id: occupiedSwitch; text: "Seat is occupied" }
+                Switch { id: occupiedSwitch; visible: !root.addingSeat; text: "Seat is occupied" }
                 Label { text: "Seat name"; color: root.textColor }
-                TextField { id: seatNameField; Layout.fillWidth: true; enabled: occupiedSwitch.checked; placeholderText: "Display name"; Accessible.name: "Seat name" }
+                TextField { id: seatNameField; Layout.fillWidth: true; enabled: root.addingSeat || occupiedSwitch.checked; placeholderText: "Display name"; Accessible.name: "Seat name" }
                 Label { text: "Role"; color: root.textColor }
-                ComboBox { id: roleCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; model: ["Participant", "Final Decision Maker", "Lead Planner", "Lead Executioner", "Lead Quality Control"] }
+                ComboBox { id: roleCombo; Layout.fillWidth: true; enabled: root.addingSeat || occupiedSwitch.checked; model: ["Participant", "Final Decision Maker", "Lead Planner", "Lead Executioner", "Lead Quality Control"] }
                 Label { text: "Provider"; color: root.textColor }
-                ComboBox { id: providerCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; model: ["OpenAI", "Gemini", "Anthropic"]; onActivated: root.refreshModelCombo("") }
+                ComboBox { id: providerCombo; Layout.fillWidth: true; enabled: root.addingSeat || occupiedSwitch.checked; model: ["OpenAI", "Gemini", "Anthropic"]; onActivated: root.refreshModelCombo("") }
                 Label { text: "Model"; color: root.textColor }
-                ComboBox { id: modelCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; textRole: "displayName"; valueRole: "id" }
+                ComboBox { id: modelCombo; Layout.fillWidth: true; enabled: root.addingSeat || occupiedSwitch.checked; textRole: "displayName"; valueRole: "id" }
                 Label { text: "Effort"; color: root.textColor }
-                ComboBox { id: effortCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; model: ["Auto", "Light", "Balanced", "Deep"] }
+                ComboBox { id: effortCombo; Layout.fillWidth: true; enabled: root.addingSeat || occupiedSwitch.checked; model: ["Auto", "Light", "Balanced", "Deep"] }
                 Label { text: "Seat color"; color: root.textColor }
                 RowLayout {
                     Layout.fillWidth: true
-                    Rectangle { Layout.preferredWidth: 42; Layout.preferredHeight: 42; radius: 6; color: colorCombo.currentText; border.color: root.lineColor; border.width: 1 }
-                    ComboBox { id: colorCombo; Layout.fillWidth: true; model: ["#49bd99", "#e0a44d", "#6fa8dc", "#c27ba0", "#8e7cc3", "#76a5af", "#cc7a6f", "#93c47d"]; Accessible.name: "Seat color" }
+                    Rectangle { Layout.preferredWidth: 42; Layout.preferredHeight: 42; radius: 6; color: colorCombo.currentValue || root.seatColorPresets[0].value; border.color: root.lineColor; border.width: 1 }
+                    ComboBox {
+                        id: colorCombo
+                        Layout.fillWidth: true
+                        textRole: "name"
+                        valueRole: "value"
+                        Accessible.name: "Seat color"
+                        delegate: ItemDelegate {
+                            id: colorChoice
+                            required property int index
+                            required property var modelData
+                            width: colorCombo.width
+                            highlighted: colorCombo.highlightedIndex === index
+                            contentItem: RowLayout {
+                                spacing: 10
+                                Rectangle { Layout.preferredWidth: 24; Layout.preferredHeight: 24; radius: 4; color: colorChoice.modelData.value; border.color: root.lineColor; border.width: 1 }
+                                Label { text: colorChoice.modelData.name; color: root.textColor; Layout.fillWidth: true }
+                            }
+                        }
+                    }
                 }
                 Label { text: "Seat color appears as an accent and does not replace the speaker name or role."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
@@ -1260,10 +1335,10 @@ ApplicationWindow {
         title: root.artifactPreviewTitle
         modal: true
         standardButtons: Dialog.Close
-        width: Math.min(root.width - 24, 760)
-        height: Math.min(root.height - 36, 720)
-        x: (root.width - width) / 2
-        y: Math.max(18, (root.height - height) / 2)
+        width: Math.min(root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - 24, 760)
+        height: Math.min(root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - 36, 720)
+        x: root.SafeArea.margins.left + (root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - width) / 2
+        y: root.SafeArea.margins.top + Math.max(18, (root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - height) / 2)
         contentItem: ScrollView {
             clip: true
             TextArea {

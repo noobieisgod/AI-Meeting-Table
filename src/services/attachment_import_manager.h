@@ -22,6 +22,13 @@ enum class AttachmentImportStatus : int {
     RenameFailure = 8
 };
 
+enum class AttachmentOpenStatus : int {
+    Opened = 0,
+    FileMissing = 1,
+    NoCompatibleApplication = 2,
+    AccessDenied = 3
+};
+
 struct AttachmentImportResult {
     QString operationId;
     AttachmentImportStatus status = AttachmentImportStatus::ProviderFailure;
@@ -48,6 +55,8 @@ public:
     ~AttachmentImportManager() override;
 
     QString startImport(const QString &tableId, const QUrl &sourceUrl, const QString &targetDirectory);
+    static AttachmentOpenStatus openImportedAttachment(const QString &filePath,
+                                                       const QString &displayName);
     bool cancelActive();
     bool active() const;
     QString activeOperationId() const;
