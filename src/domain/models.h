@@ -151,6 +151,8 @@ struct SessionState {
     BudgetPolicy budgetOverrides;
     int usedTokens = 0;
     double usedCost = 0.0;
+    bool usageEstimateUsed = false;
+    bool costEstimateComplete = true;
     int phaseUsedTokens = 0;
     double phaseUsedCost = 0.0;
     int elapsedSeconds = 0;

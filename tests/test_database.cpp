@@ -78,6 +78,8 @@ void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
   artifact.filePath = temporaryDirectory.filePath("artifact.md");
   state.artifacts.append(artifact);
   state.currentArtifactVersionId = artifact.versionId;
+  state.usageEstimateUsed = true;
+  state.costEstimateComplete = false;
   QVERIFY(manager.saveTable(state));
 
   const QString auditConnectionName = QUuid::createUuid().toString();
@@ -132,6 +134,8 @@ void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
            QString("entry-new"));
   QCOMPARE(restored.first().log.first().summary, QString("Test log"));
   QCOMPARE(restored.first().artifacts.first().versionId, QString("artifact-1"));
+  QVERIFY(restored.first().usageEstimateUsed);
+  QVERIFY(!restored.first().costEstimateComplete);
 }
 
 void DatabaseTests::legacyTranscriptSchemaMigrates() {
@@ -145,6 +149,21 @@ void DatabaseTests::legacyTranscriptSchemaMigrates() {
     setup.setDatabaseName(databasePath);
     QVERIFY(setup.open());
     QSqlQuery query(setup);
+    QVERIFY(query.exec(
+        "CREATE TABLE meeting_tables ("
+        "table_id TEXT PRIMARY KEY, title TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, "
+        "updated_at TEXT NOT NULL DEFAULT '', phase TEXT NOT NULL, round_no INTEGER NOT NULL, "
+        "active_seat_id TEXT, final_decision_maker_seat_id TEXT, used_tokens INTEGER NOT NULL, "
+        "used_cost REAL NOT NULL, phase_used_tokens INTEGER NOT NULL DEFAULT 0, "
+        "phase_used_cost REAL NOT NULL DEFAULT 0, elapsed_seconds INTEGER NOT NULL, "
+        "pending_research_responses INTEGER NOT NULL, use_budget_overrides INTEGER NOT NULL DEFAULT 0, "
+        "budget_override_json TEXT NOT NULL DEFAULT '{}', stop_policy_json TEXT NOT NULL DEFAULT '{}', "
+        "seat_usage_json TEXT NOT NULL DEFAULT '[]', pending_seats_json TEXT NOT NULL DEFAULT '[]', "
+        "attachments_json TEXT NOT NULL DEFAULT '[]', queued_input_ids_json TEXT NOT NULL DEFAULT '[]', "
+        "current_artifact_version_id TEXT NOT NULL DEFAULT '', paused_resume_phase TEXT NOT NULL DEFAULT '', "
+        "continuation_pending INTEGER NOT NULL DEFAULT 0, continuation_limit_kind INTEGER NOT NULL DEFAULT 0, "
+        "continuation_reason TEXT NOT NULL DEFAULT '', arbitration_satisfied INTEGER NOT NULL DEFAULT 0, "
+        "log_visible INTEGER NOT NULL, phase_elapsed_seconds INTEGER NOT NULL DEFAULT 0, seats_json TEXT NOT NULL)"));
     QVERIFY(query.exec(
         "CREATE TABLE transcript_entries ("
         "entry_id TEXT PRIMARY KEY, table_id TEXT NOT NULL, phase TEXT NOT "
@@ -168,11 +187,22 @@ void DatabaseTests::legacyTranscriptSchemaMigrates() {
     QSqlQuery query(inspect);
     QVERIFY(query.exec("PRAGMA table_info(transcript_entries)"));
     bool foundEntryType = false;
+    bool foundUsageEstimate = false;
+    bool foundCostEstimateComplete = false;
     while (query.next()) {
       foundEntryType =
           foundEntryType || query.value(1).toString() == "entry_type";
     }
     QVERIFY(foundEntryType);
+    QVERIFY(query.exec("PRAGMA table_info(meeting_tables)"));
+    while (query.next()) {
+      foundUsageEstimate = foundUsageEstimate
+          || query.value(1).toString() == "usage_estimate_used";
+      foundCostEstimateComplete = foundCostEstimateComplete
+          || query.value(1).toString() == "cost_estimate_complete";
+    }
+    QVERIFY(foundUsageEstimate);
+    QVERIFY(foundCostEstimateComplete);
     inspect.close();
   }
   QSqlDatabase::removeDatabase(inspectConnectionName);

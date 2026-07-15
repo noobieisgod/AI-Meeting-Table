@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QHttpMultiPart>
 #include <QJsonDocument>
+#include <QJsonParseError>
 #include <QMimeDatabase>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -202,31 +203,74 @@ QString providerRequestFailure(const ProviderRequest &request,
     return details.join(" | ");
 }
 
-QString parseFirstText(const QJsonValue &value)
+QString joinedText(const QStringList &blocks)
 {
-    if (value.isObject()) {
-        const auto object = value.toObject();
-        if (object.value("type").toString().contains("text", Qt::CaseInsensitive)
-            && object.value("text").isString()) {
-            return object.value("text").toString();
+    QStringList visible;
+    for (const QString &block : blocks) {
+        if (!block.trimmed().isEmpty()) {
+            visible.append(block.trimmed());
         }
-        for (auto it = object.begin(); it != object.end(); ++it) {
-            const QString candidate = parseFirstText(it.value());
-            if (!candidate.isEmpty()) {
-                return candidate;
-            }
-        }
-    } else if (value.isArray()) {
-        for (const auto &item : value.toArray()) {
-            const QString candidate = parseFirstText(item);
-            if (!candidate.isEmpty()) {
-                return candidate;
-            }
-        }
-    } else if (value.isString()) {
-        return value.toString();
     }
-    return {};
+    return visible.join("\n\n");
+}
+
+QString openAiVisibleText(const QJsonObject &json)
+{
+    QStringList blocks;
+    for (const QJsonValue &itemValue : json.value("output").toArray()) {
+        const QJsonObject item = itemValue.toObject();
+        const QString itemType = item.value("type").toString();
+        QJsonArray content;
+        if (itemType == "output_text" || itemType == "refusal") {
+            content.append(item);
+        } else if (itemType == "message") {
+            content = item.value("content").toArray();
+        }
+        for (const QJsonValue &blockValue : content) {
+            const QJsonObject block = blockValue.toObject();
+            const QString type = block.value("type").toString();
+            if (type == "output_text" && block.value("text").isString()) {
+                blocks.append(block.value("text").toString());
+            } else if (type == "refusal" && block.value("refusal").isString()) {
+                blocks.append(QString("Provider refusal: %1").arg(block.value("refusal").toString()));
+            }
+        }
+    }
+    return joinedText(blocks);
+}
+
+QString geminiVisibleText(const QJsonObject &json)
+{
+    const QJsonArray candidates = json.value("candidates").toArray();
+    if (candidates.isEmpty()) {
+        return {};
+    }
+    QStringList blocks;
+    for (const QJsonValue &partValue : candidates.first().toObject()
+             .value("content").toObject().value("parts").toArray()) {
+        const QJsonObject part = partValue.toObject();
+        if (!part.value("thought").toBool(false) && part.value("text").isString()) {
+            blocks.append(part.value("text").toString());
+        }
+    }
+    return joinedText(blocks);
+}
+
+QString anthropicVisibleText(const QJsonObject &json)
+{
+    QStringList blocks;
+    for (const QJsonValue &blockValue : json.value("content").toArray()) {
+        const QJsonObject block = blockValue.toObject();
+        if (block.value("type").toString() == "text" && block.value("text").isString()) {
+            blocks.append(block.value("text").toString());
+        }
+    }
+    return joinedText(blocks);
+}
+
+int estimatedTokenCount(const QString &text)
+{
+    return text.isEmpty() ? 0 : qMax(1, (text.size() + 3) / 4);
 }
 
 QString phasePurposeText(Phase phase)
@@ -508,11 +552,6 @@ double openAiPricePerOutputToken(const QString &model)
     return 0.0;
 }
 
-double estimateOpenAiCost(const QString &model, int inputTokens, int outputTokens)
-{
-    return inputTokens * openAiPricePerInputToken(model) + outputTokens * openAiPricePerOutputToken(model);
-}
-
 // Issue #17: Gemini cost estimation
 double geminiPricePerInputToken(const QString &model)
 {
@@ -534,11 +573,6 @@ double geminiPricePerOutputToken(const QString &model)
     return 0.0;
 }
 
-double estimateGeminiCost(const QString &model, int inputTokens, int outputTokens)
-{
-    return inputTokens * geminiPricePerInputToken(model) + outputTokens * geminiPricePerOutputToken(model);
-}
-
 // Issue #17: Anthropic cost estimation
 double anthropicPricePerInputToken(const QString &model)
 {
@@ -556,9 +590,90 @@ double anthropicPricePerOutputToken(const QString &model)
     return 0.0;
 }
 
-double estimateAnthropicCost(const QString &model, int inputTokens, int outputTokens)
+void setUsage(ProviderResponse &response,
+              const QString &promptText,
+              int inputTokens,
+              int outputTokens,
+              int totalTokens,
+              double inputPrice,
+              double outputPrice,
+              bool providerReported)
 {
-    return inputTokens * anthropicPricePerInputToken(model) + outputTokens * anthropicPricePerOutputToken(model);
+    response.inputTokens = qMax(0, inputTokens);
+    response.outputTokens = qMax(0, outputTokens);
+    response.usageReported = providerReported;
+    response.usageEstimated = !providerReported;
+    if (providerReported) {
+        response.usedTokens = qMax(0, totalTokens);
+    } else {
+        response.inputTokens = estimatedTokenCount(promptText);
+        response.outputTokens = estimatedTokenCount(response.content);
+        response.usedTokens = response.inputTokens + response.outputTokens;
+    }
+    response.costKnown = inputPrice > 0.0 && outputPrice > 0.0 && response.cachedTokens == 0;
+    if (response.costKnown) {
+        response.estimatedCost = response.inputTokens * inputPrice
+            + response.outputTokens * outputPrice;
+    }
+}
+
+void setReportedFailureUsage(const ProviderRequest &request,
+                             const QByteArray &body,
+                             ProviderResponse &response)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return;
+    }
+    const QJsonObject json = document.object();
+    QJsonObject usage;
+    int inputTokens = 0;
+    int outputTokens = 0;
+    int totalTokens = 0;
+    double inputPrice = 0.0;
+    double outputPrice = 0.0;
+    switch (request.provider) {
+    case ProviderKind::OpenAI:
+        usage = json.value("usage").toObject();
+        response.modelUsed = json.value("model").toString(request.model);
+        inputTokens = usage.value("input_tokens").toInt();
+        outputTokens = usage.value("output_tokens").toInt();
+        totalTokens = usage.value("total_tokens").toInt(inputTokens + outputTokens);
+        response.cachedTokens = usage.value("input_tokens_details").toObject()
+                                    .value("cached_tokens").toInt();
+        response.reasoningTokens = usage.value("output_tokens_details").toObject()
+                                       .value("reasoning_tokens").toInt();
+        inputPrice = openAiPricePerInputToken(response.modelUsed);
+        outputPrice = openAiPricePerOutputToken(response.modelUsed);
+        break;
+    case ProviderKind::Gemini:
+        usage = json.value("usageMetadata").toObject();
+        response.modelUsed = json.value("modelVersion").toString(request.model);
+        inputTokens = usage.value("promptTokenCount").toInt();
+        response.cachedTokens = usage.value("cachedContentTokenCount").toInt();
+        response.reasoningTokens = usage.value("thoughtsTokenCount").toInt();
+        outputTokens = usage.value("candidatesTokenCount").toInt() + response.reasoningTokens;
+        totalTokens = usage.value("totalTokenCount").toInt(inputTokens + outputTokens);
+        inputPrice = geminiPricePerInputToken(response.modelUsed);
+        outputPrice = geminiPricePerOutputToken(response.modelUsed);
+        break;
+    case ProviderKind::Anthropic:
+        usage = json.value("usage").toObject();
+        response.modelUsed = json.value("model").toString(request.model);
+        inputTokens = usage.value("input_tokens").toInt();
+        outputTokens = usage.value("output_tokens").toInt();
+        response.cachedTokens = usage.value("cache_creation_input_tokens").toInt()
+            + usage.value("cache_read_input_tokens").toInt();
+        totalTokens = inputTokens + outputTokens + response.cachedTokens;
+        inputPrice = anthropicPricePerInputToken(response.modelUsed);
+        outputPrice = anthropicPricePerOutputToken(response.modelUsed);
+        break;
+    }
+    if (!usage.isEmpty()) {
+        setUsage(response, {}, inputTokens, outputTokens, totalTokens,
+                 inputPrice, outputPrice, true);
+    }
 }
 
 QString outcomeUnknownMessage()
@@ -590,14 +705,27 @@ ProviderResponse makeErrorResponse(
 ProviderResponse makeGenerationFailureResponse(const ProviderRequest &request,
                                                const NetworkResult &result)
 {
+    ProviderResponse response;
     if (result.deliveryOutcome == ProviderDeliveryOutcome::Cancelled) {
-        return makeErrorResponse(request,
-                                 cancelledMessage(),
-                                 ProviderDeliveryOutcome::Cancelled);
+        response = makeErrorResponse(request, cancelledMessage(),
+                                     ProviderDeliveryOutcome::Cancelled);
+    } else if (result.deliveryOutcome == ProviderDeliveryOutcome::DefiniteFailure) {
+        const QString status = result.statusCode > 0
+            ? QString(" (HTTP %1)").arg(result.statusCode)
+            : QString{};
+        response = makeErrorResponse(
+            request,
+            QString("%1 rejected the request%2.")
+                .arg(providerKindToString(request.provider), status),
+            ProviderDeliveryOutcome::DefiniteFailure);
+    } else {
+        response = makeErrorResponse(request, outcomeUnknownMessage(),
+                                     ProviderDeliveryOutcome::OutcomeUnknown);
     }
-    return makeErrorResponse(request,
-                             outcomeUnknownMessage(),
-                             ProviderDeliveryOutcome::OutcomeUnknown);
+    if (response.deliveryOutcome == ProviderDeliveryOutcome::DefiniteFailure) {
+        setReportedFailureUsage(request, result.body, response);
+    }
+    return response;
 }
 
 ProviderResponse missingCredentialResponse(const ProviderRequest &request)
@@ -701,17 +829,26 @@ ProviderResponse callOpenAi(QNetworkAccessManager &manager,
         return makeGenerationFailureResponse(request, apiResult);
     }
 
-    const auto json = QJsonDocument::fromJson(apiResult.body).object();
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(apiResult.body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return makeErrorResponse(request, "OpenAI returned a malformed response.");
+    }
+    const auto json = document.object();
     response.success = true;
-    response.content = parseFirstText(json.value("output"));
+    response.content = openAiVisibleText(json);
+    response.modelUsed = json.value("model").toString(request.model);
     const auto usage = json.value("usage").toObject();
     const int inputTokens = usage.value("input_tokens").toInt();
     const int outputTokens = usage.value("output_tokens").toInt();
-    response.usedTokens = usage.value("total_tokens").toInt(inputTokens + outputTokens);
-    response.estimatedCost = estimateOpenAiCost(request.model, inputTokens, outputTokens);
-    if (response.content.isEmpty()) {
-        response.content = parseFirstText(json);
-    }
+    response.cachedTokens = usage.value("input_tokens_details").toObject()
+                                .value("cached_tokens").toInt();
+    response.reasoningTokens = usage.value("output_tokens_details").toObject()
+                                   .value("reasoning_tokens").toInt();
+    setUsage(response, promptText, inputTokens, outputTokens,
+             usage.value("total_tokens").toInt(inputTokens + outputTokens),
+             openAiPricePerInputToken(response.modelUsed),
+             openAiPricePerOutputToken(response.modelUsed), !usage.isEmpty());
     return response;
 }
 
@@ -865,14 +1002,25 @@ ProviderResponse callGemini(QNetworkAccessManager &manager,
         return makeGenerationFailureResponse(request, apiResult);
     }
 
-    const auto json = QJsonDocument::fromJson(apiResult.body).object();
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(apiResult.body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return makeErrorResponse(request, "Google returned a malformed response.");
+    }
+    const auto json = document.object();
     response.success = true;
-    response.content = parseFirstText(json.value("candidates"));
+    response.content = geminiVisibleText(json);
+    response.modelUsed = json.value("modelVersion").toString(request.model);
     const auto usage = json.value("usageMetadata").toObject();
     const int promptTokens = usage.value("promptTokenCount").toInt();
-    const int outputTokens = usage.value("candidatesTokenCount").toInt();
-    response.usedTokens = usage.value("totalTokenCount").toInt(promptTokens + outputTokens);
-    response.estimatedCost = estimateGeminiCost(request.model, promptTokens, outputTokens);
+    response.cachedTokens = usage.value("cachedContentTokenCount").toInt();
+    response.reasoningTokens = usage.value("thoughtsTokenCount").toInt();
+    const int outputTokens = usage.value("candidatesTokenCount").toInt()
+        + response.reasoningTokens;
+    setUsage(response, buildPromptText(request), promptTokens, outputTokens,
+             usage.value("totalTokenCount").toInt(promptTokens + outputTokens),
+             geminiPricePerInputToken(response.modelUsed),
+             geminiPricePerOutputToken(response.modelUsed), !usage.isEmpty());
     return response;
 }
 
@@ -983,14 +1131,24 @@ ProviderResponse callAnthropic(QNetworkAccessManager &manager,
         return makeGenerationFailureResponse(request, apiResult);
     }
 
-    const auto json = QJsonDocument::fromJson(apiResult.body).object();
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(apiResult.body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return makeErrorResponse(request, "Anthropic returned a malformed response.");
+    }
+    const auto json = document.object();
     response.success = true;
-    response.content = parseFirstText(json.value("content"));
+    response.content = anthropicVisibleText(json);
+    response.modelUsed = json.value("model").toString(request.model);
     const auto usage = json.value("usage").toObject();
-    response.usedTokens = usage.value("input_tokens").toInt() + usage.value("output_tokens").toInt();
     const int inputTokens = usage.value("input_tokens").toInt();
     const int outputTokens = usage.value("output_tokens").toInt();
-    response.estimatedCost = estimateAnthropicCost(request.model, inputTokens, outputTokens);
+    response.cachedTokens = usage.value("cache_creation_input_tokens").toInt()
+        + usage.value("cache_read_input_tokens").toInt();
+    setUsage(response, promptText, inputTokens, outputTokens,
+             inputTokens + outputTokens + response.cachedTokens,
+             anthropicPricePerInputToken(response.modelUsed),
+             anthropicPricePerOutputToken(response.modelUsed), !usage.isEmpty());
     return response;
 }
 
@@ -1035,8 +1193,9 @@ ProviderResponse processProviderRequest(QNetworkAccessManager &manager,
     if (response.success) {
         if (response.content.trimmed().isEmpty()) {
             response.success = false;
-            response.deliveryOutcome = ProviderDeliveryOutcome::OutcomeUnknown;
-            response.errorMessage = outcomeUnknownMessage();
+            response.deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure;
+            response.errorMessage = QString("%1 returned no user-visible assistant text.")
+                                        .arg(providerKindToString(request.provider));
         } else {
             response.deliveryOutcome = ProviderDeliveryOutcome::Succeeded;
             enrichParsedSignals(request, response);

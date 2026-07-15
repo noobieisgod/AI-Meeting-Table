@@ -55,6 +55,8 @@ ProviderResponse responseFor(const ProviderRequest &request,
   response.success = true;
   response.content = content;
   response.decisionOutcome = outcome;
+  response.usageReported = true;
+  response.costKnown = true;
   response.runGeneration = request.runGeneration;
   return response;
 }
@@ -71,6 +73,7 @@ private slots:
   void qualityControlRevisionReturnsToExecutionWithSafeDiagnostic();
   void presentProceedAliasCompletesOnce();
   void outcomeUnknownDoesNotRecordConfirmedUsage();
+  void malformedOutputPausesAndPreservesSession();
 };
 
 void AsyncTests::unknownAndGenerationStaleResponsesAreRejected() {
@@ -328,14 +331,15 @@ void AsyncTests::outcomeUnknownDoesNotRecordConfirmedUsage() {
 
   QCOMPARE(state->usedTokens, 11);
   QCOMPARE(state->usedCost, 0.25);
+  QVERIFY(state->paused);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
   QVERIFY(std::any_of(state->log.cbegin(), state->log.cend(),
                       [](const LogEvent &event) {
                         return event.summary.contains(
                             "could duplicate provider work or usage");
                       }));
 
-  state->waitingForNextTurn = false;
-  runner.executeCommand(*state, turn);
+  runner.resumeSession(*state);
   QCOMPARE(gateway.requests.size(), 2);
   ProviderResponse success =
       responseFor(gateway.requests.last(), {}, "Confirmed response");
@@ -344,6 +348,69 @@ void AsyncTests::outcomeUnknownDoesNotRecordConfirmedUsage() {
   gateway.responseReady(success);
   QCOMPARE(state->usedTokens, 18);
   QVERIFY(qFuzzyCompare(state->usedCost, 0.26));
+}
+
+void AsyncTests::malformedOutputPausesAndPreservesSession() {
+  auto state = makeSession(Phase::Planning);
+  TranscriptEntry completed;
+  completed.entryId = "completed";
+  completed.tableId = state->tableId;
+  completed.speakerSeatId = "seat-fdm";
+  completed.speakerName = "Decision Maker";
+  completed.content = "Valid earlier response";
+  state->transcript.append(completed);
+
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  WorkflowCommand turn;
+  turn.commandType = RunnerCommandType::RequestSeatTurn;
+  turn.sessionId = state->tableId;
+  turn.targetPhase = state->phase;
+  turn.targetSeatId = "seat-participant";
+  runner.executeCommand(*state, turn);
+  QCOMPARE(gateway.requests.size(), 1);
+
+  ProviderResponse malformed;
+  malformed.requestId = gateway.requests.first().requestId;
+  malformed.sessionId = state->tableId;
+  malformed.seatId = "seat-participant";
+  malformed.success = false;
+  malformed.deliveryOutcome = ProviderDeliveryOutcome::DefiniteFailure;
+  malformed.errorMessage = "OpenAI returned no user-visible assistant text.";
+  malformed.usedTokens = 12;
+  malformed.usageReported = true;
+  malformed.costKnown = false;
+  malformed.runGeneration = gateway.requests.first().runGeneration;
+  gateway.responseReady(malformed);
+
+  QCOMPARE(state->transcript.size(), 1);
+  QCOMPARE(state->transcript.first().content, QString("Valid earlier response"));
+  QCOMPARE(state->usedTokens, 12);
+  QVERIFY(state->paused);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
+  QVERIFY(std::any_of(state->log.cbegin(), state->log.cend(),
+                      [](const LogEvent &event) {
+                        return event.summary.contains("paused for recovery");
+                      }));
+
+  gateway.responseReady(malformed);
+  QCOMPARE(state->usedTokens, 12);
+  QCOMPARE(state->transcript.size(), 1);
+
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 2);
+  QCOMPARE(gateway.requests.last().seatId, QString("seat-participant"));
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Planning));
 }
 
 QTEST_GUILESS_MAIN(AsyncTests)

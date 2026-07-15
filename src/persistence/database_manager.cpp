@@ -168,7 +168,9 @@ bool DatabaseManager::createSchema()
         "arbitration_satisfied INTEGER NOT NULL DEFAULT 0,"
         "log_visible INTEGER NOT NULL,"
         "phase_elapsed_seconds INTEGER NOT NULL DEFAULT 0,"
-        "seats_json TEXT NOT NULL)");
+        "seats_json TEXT NOT NULL,"
+        "usage_estimate_used INTEGER NOT NULL DEFAULT 0,"
+        "cost_estimate_complete INTEGER NOT NULL DEFAULT 1)");
     if (!tableOk) {
         return false;
     }
@@ -193,7 +195,9 @@ bool DatabaseManager::createSchema()
         {"continuation_reason", "ALTER TABLE meeting_tables ADD COLUMN continuation_reason TEXT NOT NULL DEFAULT ''"},
         {"arbitration_satisfied", "ALTER TABLE meeting_tables ADD COLUMN arbitration_satisfied INTEGER NOT NULL DEFAULT 0"},
         {"phase_used_tokens", "ALTER TABLE meeting_tables ADD COLUMN phase_used_tokens INTEGER NOT NULL DEFAULT 0"},
-        {"phase_used_cost", "ALTER TABLE meeting_tables ADD COLUMN phase_used_cost REAL NOT NULL DEFAULT 0"}
+        {"phase_used_cost", "ALTER TABLE meeting_tables ADD COLUMN phase_used_cost REAL NOT NULL DEFAULT 0"},
+        {"usage_estimate_used", "ALTER TABLE meeting_tables ADD COLUMN usage_estimate_used INTEGER NOT NULL DEFAULT 0"},
+        {"cost_estimate_complete", "ALTER TABLE meeting_tables ADD COLUMN cost_estimate_complete INTEGER NOT NULL DEFAULT 1"}
         // phase_elapsed_seconds is in the base CREATE TABLE schema; no migration needed for new installs.
     };
     for (const auto &column : columns) {
@@ -351,7 +355,7 @@ QVector<SessionState> DatabaseManager::loadTables()
     QElapsedTimer restoreTimer;
     restoreTimer.start();
     QSqlQuery query(m_db);
-    if (!query.exec("SELECT table_id, title, pinned, updated_at, phase, round_no, active_seat_id, final_decision_maker_seat_id, used_tokens, used_cost, phase_used_tokens, phase_used_cost, elapsed_seconds, phase_elapsed_seconds, pending_research_responses, use_budget_overrides, budget_override_json, stop_policy_json, seat_usage_json, pending_seats_json, attachments_json, queued_input_ids_json, current_artifact_version_id, paused_resume_phase, continuation_pending, continuation_limit_kind, continuation_reason, arbitration_satisfied, log_visible, seats_json FROM meeting_tables")) {
+    if (!query.exec("SELECT table_id, title, pinned, updated_at, phase, round_no, active_seat_id, final_decision_maker_seat_id, used_tokens, used_cost, phase_used_tokens, phase_used_cost, elapsed_seconds, phase_elapsed_seconds, pending_research_responses, use_budget_overrides, budget_override_json, stop_policy_json, seat_usage_json, pending_seats_json, attachments_json, queued_input_ids_json, current_artifact_version_id, paused_resume_phase, continuation_pending, continuation_limit_kind, continuation_reason, arbitration_satisfied, log_visible, seats_json, usage_estimate_used, cost_estimate_complete FROM meeting_tables")) {
         qWarning().noquote() << QString("Database load failed: meeting_tables error=%1").arg(query.lastError().text());
         return tables;
     }
@@ -420,6 +424,8 @@ QVector<SessionState> DatabaseManager::loadTables()
         for (const auto &seatValue : seatArray) {
             state.seats.append(seatFromJson(seatValue.toObject()));
         }
+        state.usageEstimateUsed = query.value(30).toInt() != 0;
+        state.costEstimateComplete = query.value(31).toInt() != 0;
         tableRestoreMs += restoreTimer.elapsed();
         restoreTimer.restart();
         loadTranscript(state);
@@ -523,6 +529,8 @@ bool DatabaseManager::saveTable(const SessionState &state)
     const int arbitrationSatisfiedVal = state.arbitrationSatisfied ? 1 : 0;
     const int logVisibleVal = state.logVisible ? 1 : 0;
     const QString seatsJson = QJsonDocument(seatsToJson(state.seats)).toJson(QJsonDocument::Compact);
+    const int usageEstimateUsedVal = state.usageEstimateUsed ? 1 : 0;
+    const int costEstimateCompleteVal = state.costEstimateComplete ? 1 : 0;
 
     query.prepare(
         "UPDATE meeting_tables SET "
@@ -530,7 +538,7 @@ bool DatabaseManager::saveTable(const SessionState &state)
         "used_tokens=?, used_cost=?, phase_used_tokens=?, phase_used_cost=?, elapsed_seconds=?, phase_elapsed_seconds=?, "
         "pending_research_responses=?, use_budget_overrides=?, budget_override_json=?, stop_policy_json=?, "
         "seat_usage_json=?, pending_seats_json=?, attachments_json=?, queued_input_ids_json=?, "
-        "current_artifact_version_id=?, paused_resume_phase=?, continuation_pending=?, continuation_limit_kind=?, continuation_reason=?, arbitration_satisfied=?, log_visible=?, seats_json=? "
+        "current_artifact_version_id=?, paused_resume_phase=?, continuation_pending=?, continuation_limit_kind=?, continuation_reason=?, arbitration_satisfied=?, log_visible=?, seats_json=?, usage_estimate_used=?, cost_estimate_complete=? "
         "WHERE table_id=?");
     query.addBindValue(titleVal);
     query.addBindValue(pinnedVal);
@@ -561,6 +569,8 @@ bool DatabaseManager::saveTable(const SessionState &state)
     query.addBindValue(arbitrationSatisfiedVal);
     query.addBindValue(logVisibleVal);
     query.addBindValue(seatsJson);
+    query.addBindValue(usageEstimateUsedVal);
+    query.addBindValue(costEstimateCompleteVal);
     query.addBindValue(state.tableId);
     if (!query.exec()) {
         qWarning().noquote() << QString("Database save failed: update table=%1 error=%2").arg(state.tableId, query.lastError().text());
@@ -572,8 +582,8 @@ bool DatabaseManager::saveTable(const SessionState &state)
         // Row does not exist yet, so insert it.
         query.prepare(
             "INSERT INTO meeting_tables "
-            "(table_id, title, pinned, updated_at, phase, round_no, active_seat_id, final_decision_maker_seat_id, used_tokens, used_cost, phase_used_tokens, phase_used_cost, elapsed_seconds, phase_elapsed_seconds, pending_research_responses, use_budget_overrides, budget_override_json, stop_policy_json, seat_usage_json, pending_seats_json, attachments_json, queued_input_ids_json, current_artifact_version_id, paused_resume_phase, continuation_pending, continuation_limit_kind, continuation_reason, arbitration_satisfied, log_visible, seats_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            "(table_id, title, pinned, updated_at, phase, round_no, active_seat_id, final_decision_maker_seat_id, used_tokens, used_cost, phase_used_tokens, phase_used_cost, elapsed_seconds, phase_elapsed_seconds, pending_research_responses, use_budget_overrides, budget_override_json, stop_policy_json, seat_usage_json, pending_seats_json, attachments_json, queued_input_ids_json, current_artifact_version_id, paused_resume_phase, continuation_pending, continuation_limit_kind, continuation_reason, arbitration_satisfied, log_visible, seats_json, usage_estimate_used, cost_estimate_complete) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         query.addBindValue(state.tableId);
         query.addBindValue(titleVal);
         query.addBindValue(pinnedVal);
@@ -604,6 +614,8 @@ bool DatabaseManager::saveTable(const SessionState &state)
         query.addBindValue(arbitrationSatisfiedVal);
         query.addBindValue(logVisibleVal);
         query.addBindValue(seatsJson);
+        query.addBindValue(usageEstimateUsedVal);
+        query.addBindValue(costEstimateCompleteVal);
         if (!query.exec()) {
             qWarning().noquote() << QString("Database save failed: insert table=%1 error=%2").arg(state.tableId, query.lastError().text());
             m_db.rollback();

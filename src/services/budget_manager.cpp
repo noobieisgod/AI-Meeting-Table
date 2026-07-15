@@ -20,12 +20,19 @@ BudgetManager::BudgetManager(QObject *parent)
 {
 }
 
-void BudgetManager::applyUsage(SessionState &state, const QString &seatId, int tokens, double cost) const
+void BudgetManager::applyUsage(SessionState &state,
+                               const QString &seatId,
+                               int tokens,
+                               double cost,
+                               bool usageEstimated,
+                               bool costKnown) const
 {
     state.usedTokens += tokens;
     state.usedCost += cost;
     state.phaseUsedTokens += tokens;
     state.phaseUsedCost += cost;
+    state.usageEstimateUsed = state.usageEstimateUsed || usageEstimated;
+    state.costEstimateComplete = state.costEstimateComplete && costKnown;
 
     auto it = std::find_if(state.seatUsage.begin(), state.seatUsage.end(), [&seatId](const SeatUsageTally &usage) {
         return usage.seatId == seatId;

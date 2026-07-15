@@ -205,6 +205,18 @@ void CoreTests::budgetBoundariesAndContinuationOverrides() {
   state.phaseUsedTokens = state.budgetPolicy.maxTokensPerPhase;
   QCOMPARE(static_cast<int>(manager.status(state).action),
            static_cast<int>(BudgetLimitAction::EndPhase));
+
+  SessionState totals;
+  manager.applyUsage(totals, "seat-1", 100, 0.25, false, true);
+  manager.applyUsage(totals, "seat-2", 40, 0.0, true, false);
+  QCOMPARE(totals.usedTokens, 140);
+  QCOMPARE(totals.phaseUsedTokens, 140);
+  QVERIFY(qFuzzyCompare(totals.usedCost, 0.25));
+  QCOMPARE(totals.seatUsage.size(), 2);
+  QCOMPARE(totals.seatUsage.first().totalTokens, 100);
+  QCOMPARE(totals.seatUsage.last().totalTokens, 40);
+  QVERIFY(totals.usageEstimateUsed);
+  QVERIFY(!totals.costEstimateComplete);
 }
 
 QTEST_GUILESS_MAIN(CoreTests)

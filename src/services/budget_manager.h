@@ -37,7 +37,12 @@ class BudgetManager final : public QObject
 public:
     explicit BudgetManager(QObject *parent = nullptr);
 
-    void applyUsage(SessionState &state, const QString &seatId, int tokens, double cost) const;
+    void applyUsage(SessionState &state,
+                    const QString &seatId,
+                    int tokens,
+                    double cost,
+                    bool usageEstimated = false,
+                    bool costKnown = true) const;
     int tokenReserve(const SessionState &state) const;
     BudgetStatus status(const SessionState &state,
                         int reservedTokensInFlight = 0,

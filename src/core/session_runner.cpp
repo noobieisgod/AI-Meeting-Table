@@ -546,15 +546,52 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
         }
     }
 
-    if (!response.success) {
-        const QString errorMessage = response.errorMessage.isEmpty() ? "Provider request failed." : response.errorMessage;
+    const bool invalidVisibleContent = response.success && response.content.trimmed().isEmpty();
+    if (!response.success || invalidVisibleContent) {
+        const QString errorMessage = invalidVisibleContent
+            ? QString("%1 returned no user-visible assistant text.").arg(toString(seat.provider))
+            : (response.errorMessage.isEmpty() ? "Provider request failed." : response.errorMessage);
+        const bool malformedContent = invalidVisibleContent
+            || errorMessage.contains("malformed", Qt::CaseInsensitive)
+            || errorMessage.contains("no user-visible", Qt::CaseInsensitive);
+        if (response.deliveryOutcome == ProviderDeliveryOutcome::DefiniteFailure
+            && response.usageReported && response.usedTokens > 0) {
+            m_budgetManager->applyUsage(session, seat.seatId, response.usedTokens,
+                                        response.estimatedCost, false, response.costKnown);
+        }
         appendLog(session, LogEventType::ProviderCallFailed, seat.seatId, seat.displayName, errorMessage);
         if (session.phase == Phase::Research && session.pendingResearchResponses > 0) {
+            session.pauseRequested = session.pauseRequested || malformedContent
+                || response.deliveryOutcome == ProviderDeliveryOutcome::OutcomeUnknown;
             m_researchFailuresBySession.insert(session.tableId, m_researchFailuresBySession.value(session.tableId) + 1);
             session.pendingResearchResponses -= 1;
             appendLog(session, LogEventType::AISkipped, seat.seatId, seat.displayName, QString("%1 failed during research and was skipped.").arg(seat.displayName));
             appendLog(session, LogEventType::ProviderCallFailed, {}, {}, QString("Research batch continuing without %1.").arg(seat.displayName));
             finalizeResearchBatchIfReady(session);
+            emit sessionStateChanged(session);
+        } else if (malformedContent) {
+            WorkflowCommand retry;
+            retry.commandType = (requestMode == "arbitration"
+                                 || (session.phase == Phase::Present
+                                     && seat.role == Role::FinalDecisionMaker))
+                ? RunnerCommandType::RequestDecision
+                : RunnerCommandType::RequestSeatTurn;
+            retry.sessionId = session.tableId;
+            retry.targetPhase = requestContext.phase;
+            retry.targetSeatId = seat.seatId;
+            if (!requestMode.isEmpty()) {
+                retry.payload.insert("mode", requestMode);
+            }
+            m_delayedCommands.insert(session.tableId, retry);
+            session.activeSeatId.clear();
+            session.waitingForNextTurn = false;
+            session.paused = true;
+            session.pauseRequested = false;
+            session.pausedResumePhase = requestContext.phase;
+            session.phase = Phase::Paused;
+            appendLog(session, LogEventType::AISkipped, seat.seatId, seat.displayName,
+                      QString("%1 response was rejected. The session is paused for recovery.")
+                          .arg(seat.displayName));
             emit sessionStateChanged(session);
         } else if (requestMode == "arbitration") {
             appendLog(session, LogEventType::AISkipped, seat.seatId, seat.displayName, QString("%1 arbitration failed; continuing without an early ruling.").arg(seat.displayName));
@@ -563,6 +600,9 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
             emitAndHandle(session, makeEvent(session, EventType::SessionStopped, {{"reason", errorMessage}}));
         } else {
             session.waitingForNextTurn = true;
+            if (response.deliveryOutcome == ProviderDeliveryOutcome::OutcomeUnknown) {
+                session.pauseRequested = true;
+            }
             appendLog(session, LogEventType::AISkipped, seat.seatId, seat.displayName, QString("%1 failed and its turn was skipped.").arg(seat.displayName));
             appendLog(session, LogEventType::ProviderCallFailed, {}, {}, QString("Workflow continued after %1 failed to respond.").arg(seat.displayName));
             emitAndHandle(session, makeEvent(session, EventType::TurnSkipped, {{"seatId", seat.seatId}, {"reason", errorMessage}}));
@@ -576,7 +616,9 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
                   "Multiple explicit final decision ruling lines were detected; the final valid line was used.");
     }
 
-    m_budgetManager->applyUsage(session, seat.seatId, response.usedTokens, response.estimatedCost);
+    m_budgetManager->applyUsage(session, seat.seatId, response.usedTokens,
+                                response.estimatedCost, response.usageEstimated,
+                                response.costKnown);
     const BudgetStatus budgetStatus = budgetStatusFor(session);
 
     if (requestMode == "arbitration") {
