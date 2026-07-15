@@ -75,7 +75,7 @@ void ControllerTests::granularSignalsOnlyRefreshChangedCollections() {
   QVERIFY(controller.saveSeat(0, false, "Seat 1", 0, "", 0, 0, "#49bd99"));
   QCOMPARE(stateChanged.count(), 3);
   QCOMPARE(seatsChanged.count(), 1);
-  QCOMPARE(transcriptChanged.count(), 1);
+  QCOMPARE(transcriptChanged.count(), 2);
   QCOMPARE(artifactsChanged.count(), 0);
   QCOMPARE(logsChanged.count(), 1);
 }

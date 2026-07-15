@@ -13,11 +13,12 @@ ApplicationWindow {
 
     width: 420
     height: 860
+    minimumWidth: 320
+    minimumHeight: 540
     visible: true
     title: "AI Meeting Table"
-
-    Material.theme: Material.Light
-    Material.accent: "#2563eb"
+    color: backgroundColor
+    font.family: uiFont
 
     property var tableRows: []
     property var currentTable: ({})
@@ -27,58 +28,86 @@ ApplicationWindow {
     property var artifactRows: []
     property var logRows: []
     property var modelRefreshRows: []
-    property int selectedTab: 0
+    property var appearanceSettings: ({})
+    property var safeguards: ({})
+    property int selectedPage: 1
+    property int selectedSettingsPage: 0
     property int editingSeatIndex: -1
     property var editingSeat: ({})
+    property int settingsGeneration: 0
+    property string artifactPreviewTitle: ""
+    property string artifactPreviewBody: ""
+    property string toastMessage: ""
     property string transcriptViewTableId: ""
     property var transcriptScrollStates: ({})
     property var pendingTranscriptRestore: null
     property int transcriptRefreshGeneration: 0
+
+    readonly property bool desktopLayout: width >= 760
+    readonly property bool calmTheme: appearanceSettings.colorTheme === "Calm Workspace"
+    readonly property bool systemDark: Application.styleHints.colorScheme === Qt.Dark
+    readonly property bool darkMode: appearanceSettings.appearance === "Dark"
+                                     || (appearanceSettings.appearance === "System" && systemDark)
+    readonly property string uiFont: appearanceSettings.fontStyle === "Console"
+                                     ? "Cascadia Mono"
+                                     : appearanceSettings.fontStyle === "Workspace"
+                                       ? "Segoe UI"
+                                       : Application.font.family
+    readonly property color backgroundColor: darkMode
+                                                ? (calmTheme ? "#1c1a17" : "#10191e")
+                                                : (calmTheme ? "#f8f5ef" : "#f2f7f8")
+    readonly property color surfaceColor: darkMode
+                                             ? (calmTheme ? "#29251f" : "#18262e")
+                                             : (calmTheme ? "#fffdf9" : "#ffffff")
+    readonly property color raisedColor: darkMode
+                                            ? (calmTheme ? "#231f1b" : "#142129")
+                                            : (calmTheme ? "#f1e9dd" : "#e8f0f2")
+    readonly property color lineColor: darkMode
+                                          ? (calmTheme ? "#5b5146" : "#35505b")
+                                          : (calmTheme ? "#d8cdbc" : "#b8cdd3")
+    readonly property color textColor: darkMode
+                                          ? (calmTheme ? "#f1e9df" : "#dbe8ee")
+                                          : (calmTheme ? "#342a1d" : "#17313a")
+    readonly property color mutedColor: darkMode
+                                           ? (calmTheme ? "#b9aa98" : "#90a6ae")
+                                           : (calmTheme ? "#766652" : "#526d76")
+    readonly property color accentColor: calmTheme ? "#a06036" : "#16866c"
+    readonly property color accentInkColor: "#ffffff"
+    readonly property color dangerColor: darkMode ? "#ff8a83" : "#a92f2a"
     readonly property real transcriptFollowThreshold: 64
 
-    function refreshTables() {
-        root.tableRows = root.appController.tables();
-    }
+    Material.theme: darkMode ? Material.Dark : Material.Light
+    Material.accent: accentColor
+    Material.primary: accentColor
+    Material.background: backgroundColor
+    Material.foreground: textColor
 
-    function refreshCurrentTable() {
-        root.currentTable = root.appController.currentTable();
-    }
-
-    function refreshSeats() {
-        root.seatRows = root.appController.seats();
-    }
+    function refreshTables() { tableRows = appController.tables(); }
+    function refreshCurrentTable() { currentTable = appController.currentTable(); }
+    function refreshSeats() { seatRows = appController.seats(); }
+    function refreshAttachments() { attachmentRows = appController.attachments(); }
+    function refreshArtifacts() { artifactRows = appController.artifacts(); }
+    function refreshLogs() { logRows = appController.logs(); }
 
     function refreshTranscript() {
-        var nextTableId = root.appController.currentTableId || "";
-        var previousTableId = root.transcriptViewTableId;
+        var nextTableId = appController.currentTableId || "";
+        var previousTableId = transcriptViewTableId;
         var previousState = null;
         if (previousTableId.length > 0) {
-            if (root.pendingTranscriptRestore && root.pendingTranscriptRestore.tableId === previousTableId) {
-                previousState = root.pendingTranscriptRestore.state;
-            } else {
-                previousState = TranscriptScroll.capture(transcriptList, root.transcriptFollowThreshold);
-            }
-            root.transcriptScrollStates[previousTableId] = previousState;
+            previousState = pendingTranscriptRestore && pendingTranscriptRestore.tableId === previousTableId
+                ? pendingTranscriptRestore.state
+                : TranscriptScroll.capture(transcriptList, transcriptFollowThreshold);
+            transcriptScrollStates[previousTableId] = previousState;
         }
-
-        var restoreState = null;
-        if (nextTableId === previousTableId && previousState) {
-            restoreState = previousState;
-        } else if (root.transcriptScrollStates[nextTableId]) {
-            restoreState = root.transcriptScrollStates[nextTableId];
-        } else {
-            restoreState = {
-                follow: true,
-                contentY: 0
-            };
-        }
-
-        var rows = root.appController.transcript();
-        root.transcriptRefreshGeneration += 1;
-        root.transcriptRows = rows;
-        root.transcriptViewTableId = nextTableId;
-        root.pendingTranscriptRestore = {
-            generation: root.transcriptRefreshGeneration,
+        var restoreState = nextTableId === previousTableId && previousState
+            ? previousState
+            : transcriptScrollStates[nextTableId] || { follow: true, contentY: 0 };
+        var rows = appController.transcript();
+        transcriptRefreshGeneration += 1;
+        transcriptRows = rows;
+        transcriptViewTableId = nextTableId;
+        pendingTranscriptRestore = {
+            generation: transcriptRefreshGeneration,
             tableId: nextTableId,
             expectedCount: rows.length,
             state: restoreState,
@@ -90,47 +119,83 @@ ApplicationWindow {
         transcriptRestoreTimer.restart();
     }
 
-    function refreshArtifacts() {
-        root.artifactRows = root.appController.artifacts();
-    }
-
-    function refreshAttachments() {
-        root.attachmentRows = root.appController.attachments();
-    }
-
-    function refreshLogs() {
-        root.logRows = root.appController.logs();
-    }
-
     function refreshSettings() {
-        root.modelRefreshRows = root.appController.modelRefreshStatuses();
+        appearanceSettings = appController.settings();
+        safeguards = appController.attachmentSafeguards();
+        modelRefreshRows = appController.modelRefreshStatuses();
+        settingsGeneration += 1;
+        Qt.callLater(loadSettingsFields);
     }
 
     function refreshAll() {
-        root.refreshTables();
-        root.refreshCurrentTable();
-        root.refreshSeats();
-        root.refreshTranscript();
-        root.refreshAttachments();
-        root.refreshArtifacts();
-        root.refreshLogs();
-        root.refreshSettings();
+        refreshTables();
+        refreshCurrentTable();
+        refreshSeats();
+        refreshTranscript();
+        refreshAttachments();
+        refreshArtifacts();
+        refreshLogs();
+        refreshSettings();
     }
 
-    function openSeatEditor(index) {
-        root.editingSeatIndex = index;
-        root.editingSeat = root.seatRows[index] || ({});
-        seatNameField.text = root.editingSeat.displayName || "";
-        occupiedSwitch.checked = Boolean(root.editingSeat.occupied);
-        providerCombo.currentIndex = root.editingSeat.providerIndex || 0;
-        root.refreshModelCombo(root.editingSeat.modelId || "");
-        effortCombo.currentIndex = root.editingSeat.effortIndex || 0;
-        roleCombo.currentIndex = root.editingSeat.roleIndex || 0;
-        seatSheet.open();
+    function showErrorIfNeeded() {
+        var message = appController.lastError();
+        if (message && message.length > 0) {
+            errorDialog.text = message;
+            errorDialog.open();
+        }
+    }
+
+    function showToast(message) {
+        toastMessage = message;
+        toastTimer.restart();
+    }
+
+    function sessionButtonLabel() {
+        if (appController.running) return "Pause";
+        if (currentTable.phase === "Paused" || currentTable.phase === "Needs continuation") return "Continue";
+        return "Start";
+    }
+
+    function activateSession() {
+        var ok = appController.running ? appController.pauseSession() : appController.runOrResume();
+        if (!ok) showErrorIfNeeded();
+    }
+
+    function artifactType(phase) {
+        if (phase === "Planning") return "Plan";
+        if (phase === "Execution") return "Working artifact";
+        if (phase === "Quality Control") return "Quality review";
+        if (phase === "Present" || phase === "Completed") return "Final decision";
+        return "Session artifact";
+    }
+
+    function openSeatEditor(index, adding) {
+        editingSeatIndex = index;
+        editingSeat = seatRows[index] || ({});
+        occupiedSwitch.checked = adding ? true : Boolean(editingSeat.occupied);
+        seatNameField.text = adding ? "" : editingSeat.displayName || "";
+        providerCombo.currentIndex = editingSeat.providerIndex || 0;
+        effortCombo.currentIndex = editingSeat.effortIndex || 0;
+        roleCombo.currentIndex = editingSeat.roleIndex || 0;
+        colorCombo.currentIndex = Math.max(0, colorCombo.model.indexOf(editingSeat.color || "#49bd99"));
+        refreshModelCombo(editingSeat.modelId || "");
+        seatDialog.open();
+    }
+
+    function openAddSeat() {
+        for (var i = 0; i < seatRows.length; i++) {
+            if (!seatRows[i].occupied) {
+                openSeatEditor(i, true);
+                return;
+            }
+        }
+        errorDialog.text = "This table already uses all eight seats.";
+        errorDialog.open();
     }
 
     function refreshModelCombo(selectedModelId) {
-        var models = root.appController.modelsForProvider(providerCombo.currentIndex);
+        var models = appController.modelsForProvider(providerCombo.currentIndex);
         modelCombo.model = models;
         var found = 0;
         for (var i = 0; i < models.length; i++) {
@@ -142,23 +207,55 @@ ApplicationWindow {
         modelCombo.currentIndex = found;
     }
 
-    function showErrorIfNeeded() {
-        var message = root.appController.lastError();
-        if (message && message.length > 0) {
-            errorDialog.text = message;
-            errorDialog.open();
+    function loadSettingsFields() {
+        if (!appearanceSettings || appearanceSettings.appearance === undefined) return;
+        appearanceCombo.currentIndex = Math.max(0, appearanceCombo.model.indexOf(appearanceSettings.appearance));
+        themeCombo.currentIndex = Math.max(0, themeCombo.model.indexOf(appearanceSettings.colorTheme));
+        fontCombo.currentIndex = Math.max(0, fontCombo.model.indexOf(appearanceSettings.fontStyle));
+        maxPhaseTokens.text = String(appearanceSettings.maxTokensPerPhase);
+        maxTotalTokens.text = String(appearanceSettings.maxTotalTokens);
+        maxCost.text = String(appearanceSettings.maxTotalCost);
+        maxRounds.text = String(appearanceSettings.maxRounds);
+        maxLoops.text = String(appearanceSettings.maxExecQcLoops);
+        maxPhaseSeconds.text = String(appearanceSettings.maxPhaseSeconds);
+        maxSessionSeconds.text = String(appearanceSettings.maxSessionSeconds);
+    }
+
+    function saveAppearanceFromControls() {
+        if (!appController.saveAppearance(appearanceCombo.currentText, themeCombo.currentText, fontCombo.currentText)) {
+            showErrorIfNeeded();
+        } else {
+            refreshSettings();
         }
     }
 
-    function saveProviderKeysAndRefresh() {
-        var ok = root.appController.saveApiKey(0, openAiKeyField.text);
-        ok = root.appController.saveApiKey(1, googleKeyField.text) && ok;
-        ok = root.appController.saveApiKey(2, anthropicKeyField.text) && ok;
-        if (!ok) {
-            root.showErrorIfNeeded();
+    function saveLimits() {
+        limitError.text = "";
+        var phaseTokens = Number(maxPhaseTokens.text);
+        var totalTokens = Number(maxTotalTokens.text);
+        var cost = Number(maxCost.text);
+        var rounds = Number(maxRounds.text);
+        var loops = Number(maxLoops.text);
+        var phaseSeconds = Number(maxPhaseSeconds.text);
+        var sessionSeconds = Number(maxSessionSeconds.text);
+        if (![phaseTokens, totalTokens, cost, rounds, loops, phaseSeconds, sessionSeconds].every(function (value) { return value > 0; })) {
+            limitError.text = "Every hard stop must be a positive value.";
             return;
         }
-        root.appController.refreshModels();
+        if (totalTokens < phaseTokens) {
+            limitError.text = "Total tokens must be at least the per phase limit.";
+            return;
+        }
+        if (sessionSeconds < phaseSeconds) {
+            limitError.text = "Session seconds must be at least the phase limit.";
+            return;
+        }
+        if (!appController.saveGlobalBudget(phaseTokens, totalTokens, cost, rounds, loops, phaseSeconds, sessionSeconds)) {
+            limitError.text = appController.lastError();
+            return;
+        }
+        showToast("Hard stops saved");
+        refreshSettings();
     }
 
     function hideKeyboardAfterSend() {
@@ -166,47 +263,27 @@ ApplicationWindow {
         // qmllint disable missing-property
         Qt.inputMethod.hide();
         // qmllint enable missing-property
-        Qt.callLater(function () {
-            root.contentItem.forceActiveFocus();
-        });
+        Qt.callLater(function () { root.contentItem.forceActiveFocus(); });
     }
 
     Component.onCompleted: {
-        root.appController.startupInitialRefreshStarted();
-        root.refreshAll();
-        root.appController.startupInitialRefreshCompleted();
-        root.appController.startupPrimaryControlsReady();
+        appController.startupInitialRefreshStarted();
+        refreshAll();
+        appController.startupInitialRefreshCompleted();
+        appController.startupPrimaryControlsReady();
     }
 
     Connections {
         target: root.appController
-        function onStateChanged() {
-            root.refreshCurrentTable();
-        }
-        function onTablesChanged() {
-            root.refreshTables();
-        }
-        function onSeatsChanged() {
-            root.refreshSeats();
-        }
-        function onTranscriptChanged() {
-            root.refreshTranscript();
-        }
-        function onAttachmentsChanged() {
-            root.refreshAttachments();
-        }
-        function onArtifactsChanged() {
-            root.refreshArtifacts();
-        }
-        function onLogsChanged() {
-            root.refreshLogs();
-        }
-        function onSettingsChanged() {
-            root.refreshSettings();
-        }
-        function onAttachmentImportFailed() {
-            root.showErrorIfNeeded();
-        }
+        function onStateChanged() { root.refreshCurrentTable(); }
+        function onTablesChanged() { root.refreshTables(); }
+        function onSeatsChanged() { root.refreshSeats(); }
+        function onTranscriptChanged() { root.refreshTranscript(); }
+        function onAttachmentsChanged() { root.refreshAttachments(); }
+        function onArtifactsChanged() { root.refreshArtifacts(); }
+        function onLogsChanged() { root.refreshLogs(); }
+        function onSettingsChanged() { root.refreshSettings(); }
+        function onAttachmentImportFailed() { root.showErrorIfNeeded(); }
         function onContinuationRequested(reason) {
             continuationDialog.text = reason;
             continuationDialog.open();
@@ -216,13 +293,9 @@ ApplicationWindow {
     Timer {
         id: transcriptRestoreTimer
         interval: 16
-        repeat: false
         onTriggered: {
             var pending = root.pendingTranscriptRestore;
-            if (!pending || pending.generation !== root.transcriptRefreshGeneration) {
-                return;
-            }
-
+            if (!pending || pending.generation !== root.transcriptRefreshGeneration) return;
             transcriptList.forceLayout();
             pending.attempts += 1;
             var currentHeight = transcriptList.contentHeight;
@@ -230,7 +303,6 @@ ApplicationWindow {
             var heightStable = countReady && Math.abs(currentHeight - pending.lastContentHeight) < 0.5;
             pending.stablePasses = heightStable ? pending.stablePasses + 1 : 0;
             pending.lastContentHeight = currentHeight;
-
             if (pending.stablePasses >= 2) {
                 TranscriptScroll.restore(transcriptList, pending.state);
                 root.transcriptScrollStates[pending.tableId] = TranscriptScroll.capture(transcriptList, root.transcriptFollowThreshold);
@@ -243,146 +315,92 @@ ApplicationWindow {
         }
     }
 
-    header: ToolBar {
-        RowLayout {
-            anchors.fill: parent
-            spacing: 4
+    Timer { id: toastTimer; interval: 2600; onTriggered: root.toastMessage = "" }
 
-            ToolButton {
-                implicitWidth: 48
-                implicitHeight: 48
-                Accessible.name: "Meeting tables"
-                onClicked: tableDrawer.open()
-                contentItem: Item {
-                    implicitWidth: 24
-                    implicitHeight: 24
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 4
-                        Repeater {
-                            model: 3
-                            Rectangle {
-                                width: 22
-                                height: 2
-                                radius: 1
-                                color: "#111827"
-                            }
-                        }
-                    }
-                }
-            }
-
-            Label {
-                text: root.currentTable.title || "AI Meeting Table"
-                font.pixelSize: 18
-                font.bold: true
-                elide: Text.ElideRight
-                Layout.fillWidth: true
-            }
-
-            ToolButton {
-                text: "\u2699"
-                Accessible.name: "Settings"
-                onClicked: settingsSheet.open()
-            }
+    Shortcut {
+        enabled: Qt.platform.os === "android" && (root.selectedPage === 3 || root.selectedSettingsPage !== 0)
+        sequence: StandardKey.Cancel
+        onActivated: {
+            if (root.selectedSettingsPage !== 0) root.selectedSettingsPage = 0;
+            else root.selectedPage = 1;
         }
     }
 
-    Drawer {
-        id: tableDrawer
-        width: Math.min(root.width * 0.86, 420)
-        height: root.height
+    component NavButton: Button {
+        id: navButton
+        required property int destination
+        flat: true
+        checkable: true
+        checked: root.selectedPage === destination
+        Layout.fillWidth: true
+        implicitHeight: 48
+        font.bold: checked
+        onClicked: root.selectedPage = destination
+        background: Rectangle {
+            color: navButton.checked ? root.surfaceColor : "transparent"
+            border.color: navButton.checked ? root.lineColor : "transparent"
+            border.width: 1
+            radius: 6
+            Rectangle {
+                visible: navButton.checked
+                width: root.desktopLayout ? 4 : parent.width
+                height: root.desktopLayout ? parent.height : 3
+                anchors.left: parent.left
+                anchors.top: parent.top
+                color: root.accentColor
+                radius: 2
+            }
+        }
+        contentItem: Label {
+            text: navButton.text
+            color: navButton.checked ? root.textColor : root.mutedColor
+            font: navButton.font
+            horizontalAlignment: root.desktopLayout ? Text.AlignLeft : Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: root.desktopLayout ? 10 : 0
+        }
+    }
 
-        ColumnLayout {
+    component PanelSurface: Rectangle {
+        color: root.surfaceColor
+        border.color: root.lineColor
+        border.width: 1
+        radius: 7
+    }
+
+    header: Rectangle {
+        implicitHeight: 62
+        color: root.raisedColor
+        border.color: root.lineColor
+        border.width: 1
+        RowLayout {
             anchors.fill: parent
-            anchors.margins: 16
-            spacing: 10
-
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            spacing: 12
+            ColumnLayout {
+                spacing: 0
+                Layout.fillWidth: true
+                Label {
+                    text: "AI MEETING TABLE"
+                    color: root.accentColor
+                    font.pixelSize: 11
+                    font.bold: true
+                    font.letterSpacing: 1.2
+                }
+                Label {
+                    text: root.currentTable.title || "Meeting workspace"
+                    color: root.textColor
+                    font.pixelSize: 17
+                    font.bold: true
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+            }
             Label {
-                text: "Meeting Tables"
-                font.pixelSize: 22
-                font.bold: true
-            }
-
-            TextField {
-                id: tableSearch
-                placeholderText: "Search"
-                Layout.fillWidth: true
-            }
-
-            ListView {
-                id: tableList
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                model: root.tableRows.filter(function (row) {
-                    return !tableSearch.text || row.title.toLowerCase().indexOf(tableSearch.text.toLowerCase()) >= 0;
-                })
-                delegate: ItemDelegate {
-                    id: tableDelegate
-                    required property var modelData
-
-                    width: tableList.width
-                    highlighted: tableDelegate.modelData.selected
-                    onClicked: {
-                        root.appController.selectTable(tableDelegate.modelData.tableId);
-                        tableDrawer.close();
-                    }
-                    contentItem: Column {
-                        spacing: 2
-                        Label {
-                            text: (tableDelegate.modelData.pinned ? "\u2605 " : "") + tableDelegate.modelData.title
-                            font.bold: true
-                            elide: Text.ElideRight
-                        }
-                        Label {
-                            text: tableDelegate.modelData.phase + "  Round " + tableDelegate.modelData.round + "  " + tableDelegate.modelData.updatedAt
-                            font.pixelSize: 12
-                            opacity: 0.72
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Button {
-                    text: "New"
-                    Layout.fillWidth: true
-                    onClicked: createTableDialog.open()
-                }
-                Button {
-                    text: "Duplicate"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        if (!root.appController.duplicateCurrentTable())
-                            root.showErrorIfNeeded();
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Button {
-                    text: root.currentTable.pinned ? "Unpin" : "Pin"
-                    Layout.fillWidth: true
-                    onClicked: root.appController.togglePinCurrentTable()
-                }
-                Button {
-                    text: "Rename"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        renameField.text = root.currentTable.title || "";
-                        renameDialog.open();
-                    }
-                }
-                Button {
-                    text: "Delete"
-                    Layout.fillWidth: true
-                    Material.foreground: "#b91c1c"
-                    onClicked: deleteDialog.open()
-                }
+                text: root.currentTable.phase || "Idle"
+                color: root.mutedColor
+                font.pixelSize: 12
             }
         }
     }
@@ -391,865 +409,917 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        StackLayout {
-            id: mainPages
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            currentIndex: root.selectedTab
+            spacing: 0
 
-            ScrollView {
-                id: tablePage
-                Layout.fillWidth: true
+            Rectangle {
+                visible: root.desktopLayout
+                Layout.preferredWidth: 168
                 Layout.fillHeight: true
-                clip: true
-
+                color: root.raisedColor
+                border.color: root.lineColor
+                border.width: 1
                 ColumnLayout {
-                    width: Math.max(0, tablePage.availableWidth - 32)
-                    x: 16
-                    y: 16
-                    spacing: 12
-
-                    Pane {
-                        Layout.fillWidth: true
-                        Material.elevation: 1
-                        ColumnLayout {
-                            anchors.fill: parent
-                            spacing: 10
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Label {
-                                    text: root.currentTable.phase || "Idle"
-                                    font.pixelSize: 22
-                                    font.bold: true
-                                    Layout.fillWidth: true
-                                }
-                                Label {
-                                    text: root.currentTable.elapsed || "00:00"
-                                    opacity: 0.72
-                                }
-                            }
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: root.width >= 520 ? 4 : 2
-                                rowSpacing: 8
-                                columnSpacing: 8
-                                Repeater {
-                                    model: ["Round " + (root.currentTable.round || 0), "Tokens " + (root.currentTable.usedTokens || 0) + "/" + (root.currentTable.maxTokens || 0), "Cost $" + Number(root.currentTable.usedCost || 0).toFixed(2), (root.currentTable.artifactCount || 0) + " artifacts"]
-                                    Label {
-                                        id: statisticLabel
-                                        required property string modelData
-
-                                        text: statisticLabel.modelData
-                                        Layout.fillWidth: true
-                                        horizontalAlignment: Text.AlignHCenter
-                                        padding: 8
-                                        background: Rectangle {
-                                            color: "#eef2ff"
-                                            radius: 8
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Pane {
-                        Layout.fillWidth: true
-                        implicitHeight: Math.max(360, root.height * 0.48)
-                        Material.elevation: 1
-
-                        Item {
-                            anchors.fill: parent
-                            Rectangle {
-                                id: tableOval
-                                width: Math.min(parent.width * 0.34, 170)
-                                height: Math.min(parent.height * 0.52, 220)
-                                radius: width / 2
-                                color: "#d7c3a4"
-                                border.color: "#7a5b35"
-                                anchors.centerIn: parent
-                            }
-
-                            Repeater {
-                                model: root.seatRows
-                                delegate: Button {
-                                    id: seatButton
-                                    required property int index
-                                    required property var modelData
-
-                                    width: Math.min(parent.width * 0.34, 150)
-                                    height: 72
-                                    text: seatButton.modelData.displayName + "\n" + (seatButton.modelData.occupied ? seatButton.modelData.model : "Empty")
-                                    font.pixelSize: 12
-                                    Accessible.name: seatButton.text
-                                    onClicked: root.openSeatEditor(seatButton.index)
-                                    Material.background: seatButton.modelData.active ? "#60a5fa" : seatButton.modelData.decisionMaker ? "#fde68a" : seatButton.modelData.occupied ? "#dbeafe" : "#f3f4f6"
-                                    Material.foreground: "#111827"
-
-                                    contentItem: Item {
-                                        Column {
-                                            width: parent.width
-                                            anchors.centerIn: parent
-                                            spacing: 2
-
-                                            Label {
-                                                width: parent.width
-                                                text: seatButton.modelData.displayName
-                                                font.pixelSize: 12
-                                                horizontalAlignment: Text.AlignHCenter
-                                                elide: Text.ElideRight
-                                                maximumLineCount: 1
-                                            }
-                                            Label {
-                                                width: parent.width
-                                                text: seatButton.modelData.occupied ? seatButton.modelData.model : "Empty"
-                                                font.pixelSize: 11
-                                                horizontalAlignment: Text.AlignHCenter
-                                                wrapMode: Text.WrapAnywhere
-                                                elide: Text.ElideRight
-                                                maximumLineCount: 2
-                                            }
-                                        }
-                                    }
-
-                                    property real angle: ((seatButton.index / Math.max(1, root.seatRows.length)) * Math.PI * 2) - Math.PI / 2
-                                    property real seatRadiusBoost: (seatButton.index === 0 || seatButton.index === 4) ? 34 : 0
-                                    x: parent.width / 2 + Math.cos(angle) * Math.min(parent.width * 0.34, 230) - width / 2
-                                    y: parent.height / 2 + Math.sin(angle) * (Math.min(parent.height * 0.32, 180) + seatRadiusBoost) - height / 2
-                                }
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Button {
-                            text: root.appController.running ? "Pause" : (root.currentTable.phase === "Paused" || root.currentTable.phase === "Needs continuation" ? "Continue" : "Run")
-                            icon.name: root.appController.running ? "media-playback-pause" : "media-playback-start"
-                            Layout.fillWidth: true
-                            onClicked: {
-                                if (root.appController.running) {
-                                    if (!root.appController.pauseSession())
-                                        root.showErrorIfNeeded();
-                                } else {
-                                    if (!root.appController.runOrResume())
-                                        root.showErrorIfNeeded();
-                                }
-                            }
-                        }
-                        Button {
-                            text: "Stop"
-                            Layout.fillWidth: true
-                            onClicked: root.appController.stopSession()
-                        }
-                    }
-
-                    Item {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 16
-                    }
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 5
+                    NavButton { text: "Tables"; destination: 0 }
+                    NavButton { text: "Session"; destination: 1 }
+                    NavButton { text: "Event Log"; destination: 2 }
+                    Item { Layout.fillHeight: true }
+                    NavButton { text: "Settings"; destination: 3 }
                 }
             }
 
-            Page {
-                id: transcriptPage
+            StackLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                currentIndex: root.selectedPage
 
-                Pane {
-                    id: transcriptActions
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    implicitHeight: 52
-                    padding: 8
-
-                    RowLayout {
-                        anchors.fill: parent
-                        Label {
-                            text: "Transcript"
-                            font.bold: true
-                            Layout.fillWidth: true
-                        }
-                        Button {
-                            text: "Copy Full Transcript"
-                            enabled: root.transcriptRows.length > 0
-                            onClicked: {
-                                if (!root.appController.copyFullTranscript()) {
-                                    root.showErrorIfNeeded();
-                                }
-                            }
-                        }
-                    }
-                }
-
-                ListView {
-                    id: transcriptList
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: transcriptActions.bottom
-                    anchors.bottom: composerPane.top
-                    anchors.margins: 12
-                    anchors.bottomMargin: 8
+                ScrollView {
+                    id: tablesPage
                     clip: true
-                    model: root.transcriptRows
-                    spacing: 8
-                    delegate: Pane {
-                        id: transcriptDelegate
-                        required property var modelData
-
-                        width: transcriptList.width
-                        Material.elevation: 0
-                        background: Rectangle {
-                            color: transcriptDelegate.modelData.isUser ? "#eff6ff" : (transcriptDelegate.modelData.isDecision ? "#fef3c7" : "#ffffff")
-                            border.color: "#e5e7eb"
-                            radius: 8
+                    ColumnLayout {
+                        width: Math.max(0, tablesPage.availableWidth - 32)
+                        x: 16
+                        y: 18
+                        spacing: 14
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                spacing: 3
+                                Layout.fillWidth: true
+                                Label { text: "Tables"; color: root.textColor; font.pixelSize: 30; font.bold: true }
+                                Label { text: "Open an existing meeting or create a new table."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            }
+                            Button { text: "New table"; onClicked: createTableDialog.open() }
                         }
                         ColumnLayout {
-                            width: parent.width
-                            Label {
-                                text: "[" + transcriptDelegate.modelData.timestamp + "] " + transcriptDelegate.modelData.speaker + "  " + transcriptDelegate.modelData.phase
-                                font.bold: true
-                                wrapMode: Text.Wrap
-                                Layout.fillWidth: true
-                            }
-                            TextEdit {
-                                id: transcriptBody
-                                text: transcriptDelegate.modelData.content
-                                textFormat: TextEdit.MarkdownText
-                                wrapMode: TextEdit.Wrap
-                                color: "#111827"
-                                readOnly: true
-                                selectByMouse: true
-                                persistentSelection: true
-                                activeFocusOnPress: true
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: contentHeight
-                                Accessible.name: "Transcript message from " + transcriptDelegate.modelData.speaker
-                                onLinkActivated: function (link) {}
-                            }
-                        }
-                    }
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 8
-                        visible: transcriptList.count === 0
-                        width: parent.width * 0.86
-                        Label {
-                            text: "Nothing Here Yet"
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#6b7280"
-                        }
-                        Label {
-                            text: "Run the table to generate content."
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.Wrap
-                            width: parent.width
-                            color: "#9ca3af"
-                        }
-                    }
-                }
-
-                Pane {
-                    id: composerPane
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    anchors.bottomMargin: 12
-                    implicitHeight: composerLayout.implicitHeight + topPadding + bottomPadding
-                    ColumnLayout {
-                        id: composerLayout
-                        anchors.fill: parent
-                        spacing: 6
-
-                        Flow {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: visible ? childrenRect.height : 0
-                            visible: root.attachmentRows.length > 0
-                            spacing: 6
-
+                            spacing: 8
                             Repeater {
-                                model: root.attachmentRows
-                                delegate: Rectangle {
-                                    id: attachmentChip
+                                model: root.tableRows
+                                delegate: Button {
+                                    id: tableRow
                                     required property var modelData
-
-                                    width: Math.min(composerPane.width - 16, chipRow.implicitWidth + 16)
-                                    height: 32
-                                    radius: 8
-                                    color: "#eef2ff"
-                                    border.color: "#c7d2fe"
-
-                                    RowLayout {
-                                        id: chipRow
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 8
-                                        spacing: 4
-                                        Label {
-                                            text: attachmentChip.modelData.displayName
-                                            elide: Text.ElideMiddle
-                                            Layout.maximumWidth: 220
-                                            Accessible.name: "Attachment " + attachmentChip.modelData.displayName
-                                        }
-                                        ToolButton {
-                                            text: "×"
-                                            Accessible.name: "Remove attachment " + attachmentChip.modelData.displayName
-                                            onClicked: {
-                                                if (!root.appController.removeAttachment(attachmentChip.modelData.attachmentId))
-                                                    root.showErrorIfNeeded();
+                                    Layout.fillWidth: true
+                                    implicitHeight: 78
+                                    Accessible.name: "Open table " + modelData.title
+                                    onClicked: {
+                                        root.appController.selectTable(modelData.tableId);
+                                        root.selectedPage = 1;
+                                    }
+                                    background: Rectangle {
+                                        color: tableRow.modelData.selected ? root.raisedColor : root.surfaceColor
+                                        border.color: tableRow.modelData.selected ? root.accentColor : root.lineColor
+                                        border.width: tableRow.modelData.selected ? 2 : 1
+                                        radius: 7
+                                    }
+                                    contentItem: RowLayout {
+                                        spacing: 12
+                                        ColumnLayout {
+                                            spacing: 4
+                                            Layout.fillWidth: true
+                                            Label {
+                                                text: (tableRow.modelData.pinned ? "Pinned | " : "") + tableRow.modelData.title
+                                                color: root.textColor
+                                                font.bold: true
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                            Label {
+                                                text: tableRow.modelData.phase + " | Round " + tableRow.modelData.round + " | " + tableRow.modelData.updatedAt
+                                                color: root.mutedColor
+                                                font.pixelSize: 12
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
                                             }
                                         }
+                                        Label { text: tableRow.modelData.transcriptCount + " messages"; color: root.mutedColor; visible: root.width >= 520 }
                                     }
                                 }
                             }
+                            Label {
+                                visible: root.tableRows.length === 0
+                                text: "No meeting tables yet. Create one to configure seats and begin a session."
+                                color: root.mutedColor
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
+                                padding: 24
+                            }
                         }
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Button { text: "Duplicate"; enabled: Boolean(root.currentTable.tableId); onClicked: { if (!root.appController.duplicateCurrentTable()) root.showErrorIfNeeded(); } }
+                            Button { text: root.currentTable.pinned ? "Unpin" : "Pin"; enabled: Boolean(root.currentTable.tableId); onClicked: root.appController.togglePinCurrentTable() }
+                            Button { text: "Rename"; enabled: Boolean(root.currentTable.tableId); onClicked: { renameField.text = root.currentTable.title || ""; renameDialog.open(); } }
+                            Button { text: "Delete"; enabled: Boolean(root.currentTable.tableId); Material.foreground: root.dangerColor; onClicked: deleteDialog.open() }
+                        }
+                        Item { Layout.preferredHeight: 20 }
+                    }
+                }
+
+                ScrollView {
+                    id: sessionPage
+                    clip: true
+                    ColumnLayout {
+                        id: sessionContent
+                        width: Math.max(0, sessionPage.availableWidth - 28)
+                        x: 14
+                        y: 16
+                        spacing: 12
 
                         RowLayout {
                             Layout.fillWidth: true
-                            ToolButton {
-                                text: root.appController.attachmentImportInProgress ? "Cancel" : "+"
-                                enabled: root.appController.attachmentImportStatus !== "Cancelling attachment import..."
-                                Accessible.name: root.appController.attachmentImportInProgress
-                                    ? "Cancel attachment import"
-                                    : "Add attachment"
-                                onClicked: {
-                                    if (root.appController.attachmentImportInProgress)
-                                        root.appController.cancelAttachmentImport();
-                                    else
-                                        attachmentDialog.open();
+                            spacing: 12
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Label { text: "LIVE SESSION"; color: root.accentColor; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1.1 }
+                                Label { text: root.currentTable.title || "No table selected"; color: root.textColor; font.pixelSize: 27; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                            }
+                            Flow {
+                                spacing: 7
+                                Button {
+                                    text: root.sessionButtonLabel()
+                                    Accessible.name: text + " session"
+                                    font.bold: true
+                                    Material.background: root.accentColor
+                                    Material.foreground: root.accentInkColor
+                                    onClicked: root.activateSession()
+                                }
+                                Button {
+                                    text: "Stop"
+                                    Accessible.name: "Stop session"
+                                    enabled: root.appController.running || root.currentTable.phase === "Paused" || root.currentTable.phase === "Needs continuation"
+                                    onClicked: { if (!root.appController.stopSession()) root.showErrorIfNeeded(); }
                                 }
                             }
-                            BusyIndicator {
-                                running: root.appController.attachmentImportInProgress
-                                visible: running
-                                Layout.preferredWidth: 28
-                                Layout.preferredHeight: 28
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: root.width >= 900 ? 5 : 2
+                            rowSpacing: 1
+                            columnSpacing: 1
+                            Repeater {
+                                model: [
+                                    { label: "Status", value: root.currentTable.phase || "Idle" },
+                                    { label: "Elapsed", value: root.currentTable.elapsed || "00:00" },
+                                    { label: "Round", value: String(root.currentTable.round || 0) },
+                                    { label: "Tokens", value: (root.currentTable.usedTokens || 0) + " / " + (root.currentTable.maxTokens || 0) },
+                                    { label: "Cost", value: "$" + Number(root.currentTable.usedCost || 0).toFixed(2) + " / $" + Number(root.currentTable.maxCost || 0).toFixed(2) }
+                                ]
+                                delegate: Rectangle {
+                                    id: metric
+                                    required property int index
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    Layout.columnSpan: metric.index === 4 && root.width < 900 ? 2 : 1
+                                    Layout.minimumWidth: 110
+                                    Layout.preferredHeight: 62
+                                    color: root.raisedColor
+                                    border.color: root.lineColor
+                                    border.width: 1
+                                    Column {
+                                        anchors.fill: parent
+                                        anchors.margins: 9
+                                        spacing: 3
+                                        Label { text: metric.modelData.label; color: root.mutedColor; font.pixelSize: 11 }
+                                        Label { text: metric.modelData.value; color: root.textColor; font.bold: true; elide: Text.ElideRight; width: parent.width }
+                                    }
+                                }
                             }
-                            Label {
-                                visible: root.appController.attachmentImportInProgress
-                                text: root.appController.attachmentImportStatus
-                                elide: Text.ElideRight
-                                Layout.maximumWidth: 180
-                            }
-                            Rectangle {
+                        }
+
+                        GridLayout {
+                            id: sessionGrid
+                            Layout.fillWidth: true
+                            columns: sessionContent.width >= 980 ? 2 : 1
+                            columnSpacing: 12
+                            rowSpacing: 12
+
+                            PanelSurface {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 82
-                                radius: 8
-                                color: "#ffffff"
-                                border.color: "#9ca3af"
-                                border.width: 1
-                                clip: true
-                                ScrollView {
-                                    id: composerScroll
+                                Layout.preferredWidth: 700
+                                Layout.preferredHeight: Math.max(560, Math.min(690, root.height - 180))
+                                Layout.alignment: Qt.AlignTop | Qt.AlignLeft
+                                ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: 2
-                                    clip: true
-                                    TextArea {
-                                        id: composer
-                                        width: composerScroll.availableWidth
-                                        placeholderText: "Message"
-                                        placeholderTextColor: "#6b7280"
-                                        color: "#111827"
-                                        wrapMode: Text.Wrap
-                                        background: null
+                                    spacing: 0
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 52
+                                        Layout.leftMargin: 14
+                                        Layout.rightMargin: 8
+                                        Label { text: "Transcript"; color: root.textColor; font.pixelSize: 17; font.bold: true; Layout.fillWidth: true }
+                                        Button {
+                                            text: "Copy full transcript"
+                                            flat: true
+                                            implicitHeight: 40
+                                            enabled: root.transcriptRows.length > 0
+                                            Accessible.name: "Copy full transcript"
+                                            onClicked: {
+                                                if (root.appController.copyFullTranscript()) root.showToast("Transcript copied");
+                                                else root.showErrorIfNeeded();
+                                            }
+                                        }
+                                    }
+                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
+                                    ListView {
+                                        id: transcriptList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        Layout.leftMargin: 10
+                                        Layout.rightMargin: 10
+                                        clip: true
+                                        spacing: 0
+                                        model: root.transcriptRows
+                                        delegate: Rectangle {
+                                            id: messageRow
+                                            required property var modelData
+                                            width: transcriptList.width
+                                            implicitHeight: messageLayout.implicitHeight + 26
+                                            color: messageRow.modelData.isDecision ? root.raisedColor : "transparent"
+                                            border.color: root.lineColor
+                                            border.width: 0
+                                            Rectangle { width: 4; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; color: messageRow.modelData.color; radius: 2 }
+                                            ColumnLayout {
+                                                id: messageLayout
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.top: parent.top
+                                                anchors.margins: 12
+                                                anchors.leftMargin: 16
+                                                spacing: 9
+                                                GridLayout {
+                                                    Layout.fillWidth: true
+                                                    columns: width >= 360 ? 2 : 1
+                                                    columnSpacing: 12
+                                                    rowSpacing: 3
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 2
+                                                        Label { text: messageRow.modelData.speaker; color: root.textColor; font.pixelSize: 14; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                                        Label { text: messageRow.modelData.role; color: root.mutedColor; font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                                    }
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 2
+                                                        Label { text: messageRow.modelData.timestamp; color: root.textColor; font.pixelSize: 14; font.bold: true; horizontalAlignment: messageLayout.width >= 360 ? Text.AlignRight : Text.AlignLeft; Layout.fillWidth: true }
+                                                        Label { text: messageRow.modelData.model; color: root.mutedColor; font.pixelSize: 12; horizontalAlignment: messageLayout.width >= 360 ? Text.AlignRight : Text.AlignLeft; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                                                    }
+                                                }
+                                                TextEdit {
+                                                    text: messageRow.modelData.content
+                                                    textFormat: TextEdit.MarkdownText
+                                                    wrapMode: TextEdit.Wrap
+                                                    color: root.textColor
+                                                    readOnly: true
+                                                    selectByMouse: true
+                                                    Layout.fillWidth: true
+                                                    Layout.preferredHeight: contentHeight
+                                                    Accessible.name: "Transcript message from " + messageRow.modelData.speaker
+                                                    onLinkActivated: function (link) {}
+                                                }
+                                            }
+                                            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: root.lineColor }
+                                        }
+                                        Label {
+                                            anchors.centerIn: parent
+                                            visible: transcriptList.count === 0
+                                            width: Math.min(parent.width - 32, 420)
+                                            text: "No transcript yet\n\nAdd a message, configure the seats, then start the table."
+                                            color: root.mutedColor
+                                            horizontalAlignment: Text.AlignHCenter
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 12
+                                        Layout.rightMargin: 12
+                                        Layout.topMargin: 10
+                                        Layout.bottomMargin: 12
+                                        spacing: 7
+                                        Label { text: "Message to the table"; color: root.textColor; font.bold: true }
+                                        TextArea {
+                                            id: composer
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 116
+                                            placeholderText: "Add instructions, context, or a follow up question"
+                                            wrapMode: TextArea.Wrap
+                                            color: root.textColor
+                                            background: Rectangle { color: root.backgroundColor; border.color: composer.activeFocus ? root.accentColor : root.lineColor; border.width: composer.activeFocus ? 2 : 1; radius: 6 }
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Button {
+                                                text: root.appController.attachmentImportInProgress ? "Cancel import" : "Add attachment"
+                                                implicitHeight: 40
+                                                onClicked: root.appController.attachmentImportInProgress ? root.appController.cancelAttachmentImport() : attachmentDialog.open()
+                                            }
+                                            Label { visible: root.appController.attachmentImportInProgress; text: root.appController.attachmentImportStatus; color: root.mutedColor; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            Item { visible: !root.appController.attachmentImportInProgress; Layout.fillWidth: true }
+                                            Button {
+                                                text: "Send"
+                                                implicitHeight: 40
+                                                font.bold: true
+                                                onClicked: {
+                                                    if (root.appController.sendMessage(composer.text)) {
+                                                        composer.clear();
+                                                        root.hideKeyboardAfterSend();
+                                                    } else root.showErrorIfNeeded();
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            Button {
-                                text: "Send"
-                                onClicked: {
-                                    if (root.appController.sendMessage(composer.text)) {
-                                        composer.clear();
-                                        root.hideKeyboardAfterSend();
-                                    } else {
-                                        root.showErrorIfNeeded();
+
+                            GridLayout {
+                                id: sidePanels
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 340
+                                Layout.minimumWidth: sessionGrid.columns === 2 ? 300 : 0
+                                Layout.alignment: Qt.AlignTop
+                                columns: sessionGrid.columns === 1 && sessionContent.width >= 650 ? 2 : 1
+                                columnSpacing: 12
+                                rowSpacing: 12
+
+                                PanelSurface {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitHeight: seatsPanelContent.implicitHeight + 28
+                                    ColumnLayout {
+                                        id: seatsPanelContent
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 14
+                                        spacing: 10
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Label { text: "Seats"; color: root.textColor; font.bold: true; font.pixelSize: 16; Layout.fillWidth: true }
+                                            Label { text: root.seatRows.filter(function (seat) { return seat.occupied; }).length + " occupied"; color: root.mutedColor; font.pixelSize: 11 }
+                                        }
+                                        Flow {
+                                            id: seatFlow
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Repeater {
+                                                model: root.seatRows
+                                                delegate: Button {
+                                                    id: seatCard
+                                                    required property int index
+                                                    required property var modelData
+                                                    visible: modelData.occupied
+                                                    width: visible ? (seatFlow.width >= 280 ? (seatFlow.width - 8) / 2 : seatFlow.width) : 0
+                                                    height: visible ? 102 : 0
+                                                    Accessible.name: "Configure " + modelData.displayName
+                                                    onClicked: root.openSeatEditor(index, false)
+                                                    background: Rectangle {
+                                                        color: root.raisedColor
+                                                        border.color: seatCard.modelData.active ? seatCard.modelData.color : root.lineColor
+                                                        border.width: seatCard.modelData.active ? 2 : 1
+                                                        radius: 6
+                                                        Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 5; color: seatCard.modelData.color; radius: 2 }
+                                                    }
+                                                    contentItem: Column {
+                                                        leftPadding: 7
+                                                        spacing: 4
+                                                        Label { width: parent.width - 7; text: seatCard.modelData.displayName; color: root.textColor; font.bold: true; elide: Text.ElideRight }
+                                                        Label { width: parent.width - 7; text: seatCard.modelData.role; color: root.mutedColor; font.pixelSize: 11; elide: Text.ElideRight }
+                                                        Label { width: parent.width - 7; text: seatCard.modelData.provider + " | " + seatCard.modelData.model; color: root.mutedColor; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 2 }
+                                                    }
+                                                }
+                                            }
+                                            Button {
+                                                id: addSeatTile
+                                                width: seatFlow.width >= 280 ? (seatFlow.width - 8) / 2 : seatFlow.width
+                                                height: 102
+                                                text: "Add Seat"
+                                                Accessible.name: "Add Seat"
+                                                font.bold: true
+                                                onClicked: root.openAddSeat()
+                                                background: Rectangle { color: "transparent"; border.color: root.accentColor; border.width: 1; radius: 6 }
+                                                contentItem: Label { text: addSeatTile.text; color: root.accentColor; font: addSeatTile.font; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                PanelSurface {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitHeight: attachmentPanelContent.implicitHeight + 28
+                                    ColumnLayout {
+                                        id: attachmentPanelContent
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 14
+                                        spacing: 8
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Label { text: "Attachments"; color: root.textColor; font.bold: true; font.pixelSize: 16; Layout.fillWidth: true }
+                                            Button { text: root.appController.attachmentImportInProgress ? "Cancel" : "Add"; implicitHeight: 38; onClicked: root.appController.attachmentImportInProgress ? root.appController.cancelAttachmentImport() : attachmentDialog.open() }
+                                        }
+                                        Label { visible: root.attachmentRows.length === 0 && !root.appController.attachmentImportInProgress; text: "No attachments selected."; color: root.mutedColor }
+                                        Repeater {
+                                            model: root.attachmentRows
+                                            delegate: RowLayout {
+                                                id: attachmentRow
+                                                required property var modelData
+                                                Layout.fillWidth: true
+                                                Label { text: attachmentRow.modelData.displayName; color: root.textColor; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                                Button { text: "Remove"; flat: true; Accessible.name: "Remove attachment " + attachmentRow.modelData.displayName; onClicked: { if (!root.appController.removeAttachment(attachmentRow.modelData.attachmentId)) root.showErrorIfNeeded(); } }
+                                            }
+                                        }
+                                        ProgressBar { visible: root.appController.attachmentImportInProgress; indeterminate: true; Layout.fillWidth: true }
+                                        Label { visible: root.appController.attachmentImportInProgress; text: root.appController.attachmentImportStatus; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    }
+                                }
+
+                                PanelSurface {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitHeight: generationPanelContent.implicitHeight + 28
+                                    ColumnLayout {
+                                        id: generationPanelContent
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 14
+                                        spacing: 9
+                                        Label { text: "Generation"; color: root.textColor; font.bold: true; font.pixelSize: 16 }
+                                        Label { text: root.appController.running ? "Session is running" : root.currentTable.phase || "Idle"; color: root.textColor; font.bold: true }
+                                        Label { text: root.appController.running ? "Provider calls follow the configured seat order and hard stops." : "Generation begins when the table starts."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                        ProgressBar {
+                                            Layout.fillWidth: true
+                                            from: 0
+                                            to: Math.max(1, Number(root.currentTable.maxTokens || 1))
+                                            value: Number(root.currentTable.usedTokens || 0)
+                                            indeterminate: root.appController.running && Number(root.currentTable.maxTokens || 0) === 0
+                                        }
+                                        Label { text: (root.currentTable.usedTokens || 0) + " tokens used"; color: root.mutedColor; font.pixelSize: 11 }
+                                    }
+                                }
+
+                                PanelSurface {
+                                    Layout.fillWidth: true
+                                    Layout.alignment: Qt.AlignTop
+                                    implicitHeight: artifactsPanelContent.implicitHeight + 28
+                                    ColumnLayout {
+                                        id: artifactsPanelContent
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 14
+                                        spacing: 8
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Label { text: "Artifacts"; color: root.textColor; font.bold: true; font.pixelSize: 16; Layout.fillWidth: true }
+                                            Label { text: String(root.artifactRows.length); color: root.mutedColor }
+                                        }
+                                        Label { visible: root.artifactRows.length === 0; text: "No generated artifacts yet."; color: root.mutedColor }
+                                        Repeater {
+                                            model: root.artifactRows
+                                            delegate: Button {
+                                                id: artifactRow
+                                                required property var modelData
+                                                Layout.fillWidth: true
+                                                implicitHeight: 62
+                                                Accessible.name: "Open " + root.artifactType(modelData.phase) + " artifact"
+                                                onClicked: {
+                                                    root.artifactPreviewTitle = root.artifactType(modelData.phase) + " | " + modelData.createdAt;
+                                                    root.artifactPreviewBody = root.appController.artifactContent(modelData.versionId) || "Artifact content is unavailable.";
+                                                    artifactDialog.open();
+                                                }
+                                                background: Rectangle { color: root.raisedColor; border.color: root.lineColor; border.width: 1; radius: 5 }
+                                                contentItem: Column {
+                                                    spacing: 3
+                                                    Label { width: parent.width; text: root.artifactType(artifactRow.modelData.phase); color: root.textColor; font.bold: true; elide: Text.ElideRight }
+                                                    Label { width: parent.width; text: artifactRow.modelData.summary + " | " + artifactRow.modelData.createdAt; color: root.mutedColor; font.pixelSize: 11; elide: Text.ElideRight }
+                                                }
+                                            }
+                                        }
+                                        Button {
+                                            text: root.artifactRows.length === 0 ? "Start session to generate" : "Continue session"
+                                            flat: true
+                                            Layout.fillWidth: true
+                                            onClicked: root.activateSession()
+                                        }
                                     }
                                 }
                             }
                         }
+                        Item { Layout.preferredHeight: 18 }
                     }
                 }
-            }
 
-            Page {
-                id: artifactsPage
-
-                ListView {
-                    id: artifactList
-                    anchors.fill: parent
-                    anchors.margins: 12
+                ScrollView {
+                    id: eventLogPage
                     clip: true
-                    model: root.artifactRows
-                    spacing: 8
-                    delegate: Pane {
-                        id: artifactDelegate
-                        required property var modelData
-
-                        width: ListView.view.width
-                        Material.elevation: 0
-                        background: Rectangle {
-                            color: "#ffffff"
-                            border.color: "#e5e7eb"
-                            radius: 8
-                        }
+                    ColumnLayout {
+                        width: Math.max(0, eventLogPage.availableWidth - 32)
+                        x: 16
+                        y: 18
+                        spacing: 12
+                        Label { text: "Event Log"; color: root.textColor; font.pixelSize: 30; font.bold: true }
+                        Label { text: "Session events, provider failures, retries, limits, and decisions."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
                         ColumnLayout {
-                            width: parent.width
+                            Layout.fillWidth: true
                             spacing: 6
-                            Label {
-                                text: artifactDelegate.modelData.summary
-                                font.bold: true
-                                wrapMode: Text.Wrap
-                                Layout.fillWidth: true
-                            }
-                            Label {
-                                text: artifactDelegate.modelData.phase + " Round " + artifactDelegate.modelData.round + "  " + artifactDelegate.modelData.createdAt
-                                color: "#4b5563"
-                                wrapMode: Text.Wrap
-                                Layout.fillWidth: true
-                            }
-                            Text {
-                                text: {
-                                    var content = root.appController.artifactContent(artifactDelegate.modelData.versionId);
-                                    return content && content.length > 0 ? content : "_No artifact content available._";
+                            Repeater {
+                                model: root.logRows
+                                delegate: PanelSurface {
+                                    id: logRow
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    implicitHeight: logRowContent.implicitHeight + 22
+                                    ColumnLayout {
+                                        id: logRowContent
+                                        anchors.fill: parent
+                                        anchors.margins: 11
+                                        spacing: 5
+                                        Label { text: logRow.modelData.timestamp + " | " + logRow.modelData.type + " | " + logRow.modelData.phase + " R" + logRow.modelData.round; color: root.mutedColor; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                        Label { text: logRow.modelData.summary; color: root.textColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    }
                                 }
-                                textFormat: Text.MarkdownText
-                                wrapMode: Text.Wrap
-                                color: "#111827"
-                                Layout.fillWidth: true
-                                onLinkActivated: function (link) {}
                             }
+                            Label { visible: root.logRows.length === 0; text: "No events recorded yet."; color: root.mutedColor; padding: 24 }
                         }
-                    }
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 8
-                        visible: artifactList.count === 0
-                        width: parent.width * 0.86
-                        Label {
-                            text: "Nothing Here Yet"
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#6b7280"
-                        }
-                        Label {
-                            text: "Run the table to generate content."
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.Wrap
-                            width: parent.width
-                            color: "#9ca3af"
-                        }
+                        Item { Layout.preferredHeight: 18 }
                     }
                 }
-            }
 
-            Page {
-                id: logPage
-
-                ListView {
-                    id: logList
-                    anchors.fill: parent
-                    anchors.margins: 12
+                ScrollView {
+                    id: settingsPage
                     clip: true
-                    model: root.logRows
-                    spacing: 4
-                    delegate: Rectangle {
-                        id: logDelegate
-                        required property var modelData
-
-                        width: ListView.view.width
-                        implicitHeight: logCardContent.implicitHeight + 20
-                        radius: 8
-                        color: "#ffffff"
-                        border.color: "#e5e7eb"
-                        border.width: 1
-
-                        Column {
-                            id: logCardContent
-                            anchors.fill: parent
-                            anchors.margins: 10
-                            spacing: 6
-
-                            Label {
-                                width: parent.width
-                                text: "[" + logDelegate.modelData.timestamp + "] " + logDelegate.modelData.type + (logDelegate.modelData.actorName ? " | " + logDelegate.modelData.actorName : "") + " | " + logDelegate.modelData.phase + " R" + logDelegate.modelData.round
-                                color: "#6b7280"
-                                font.pixelSize: 11
-                                wrapMode: Text.Wrap
+                    ColumnLayout {
+                        width: Math.max(0, settingsPage.availableWidth - 32)
+                        x: 16
+                        y: 18
+                        spacing: 14
+                        Label { text: "Settings"; color: root.textColor; font.pixelSize: 30; font.bold: true }
+                        Label { text: "Provider credentials, model catalogs, hard stops, attachment safeguards, and appearance."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                        ComboBox {
+                            visible: !root.desktopLayout
+                            Layout.fillWidth: true
+                            model: ["Provider credentials", "Models", "Hard stops", "Attachments", "Appearance"]
+                            currentIndex: root.selectedSettingsPage
+                            onActivated: root.selectedSettingsPage = currentIndex
+                            Accessible.name: "Settings category"
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignTop
+                            spacing: 14
+                            ColumnLayout {
+                                visible: root.desktopLayout
+                                Layout.preferredWidth: 190
+                                Layout.alignment: Qt.AlignTop
+                                spacing: 4
+                                Repeater {
+                                    model: ["Provider credentials", "Models", "Hard stops", "Attachments", "Appearance"]
+                                    delegate: Button {
+                                        required property int index
+                                        required property string modelData
+                                        text: modelData
+                                        flat: true
+                                        checkable: true
+                                        checked: root.selectedSettingsPage === index
+                                        Layout.fillWidth: true
+                                        onClicked: root.selectedSettingsPage = index
+                                    }
+                                }
                             }
+                            StackLayout {
+                                id: settingsContent
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignTop
+                                currentIndex: root.selectedSettingsPage
 
-                            Label {
-                                width: parent.width
-                                text: logDelegate.modelData.summary
-                                color: "#111827"
-                                font.pixelSize: 13
-                                wrapMode: Text.Wrap
-                                textFormat: Text.PlainText
+                                ColumnLayout {
+                                    spacing: 12
+                                    Label { text: "Provider credentials"; color: root.textColor; font.pixelSize: 20; font.bold: true }
+                                    Label { text: "Keys are stored by the device credential store. They are only sent to the selected provider when a session uses that provider."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    Flow {
+                                        id: providerFlow
+                                        Layout.fillWidth: true
+                                        spacing: 10
+                                        Repeater {
+                                            model: ["OpenAI", "Gemini", "Anthropic"]
+                                            delegate: PanelSurface {
+                                                id: providerCard
+                                                required property int index
+                                                required property string modelData
+                                                property bool reveal: false
+                                                width: providerFlow.width >= 780 ? (providerFlow.width - 20) / 3 : providerFlow.width
+                                                height: 230
+                                                ColumnLayout {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 12
+                                                    spacing: 8
+                                                    Label { text: providerCard.modelData; color: root.textColor; font.bold: true; font.pixelSize: 16 }
+                                                    Label { text: "API key"; color: root.textColor }
+                                                    TextField {
+                                                        id: keyField
+                                                        Layout.fillWidth: true
+                                                        echoMode: providerCard.reveal ? TextInput.Normal : TextInput.Password
+                                                        placeholderText: "Enter a new API key"
+                                                        Accessible.name: providerCard.modelData + " API key"
+                                                    }
+                                                    Label {
+                                                        text: {
+                                                            root.settingsGeneration;
+                                                            return root.appController.apiKeyStatus(providerCard.index);
+                                                        }
+                                                        color: root.mutedColor
+                                                        font.pixelSize: 11
+                                                    }
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        Button { text: providerCard.reveal ? "Hide" : "Show"; onClicked: providerCard.reveal = !providerCard.reveal }
+                                                        Item { Layout.fillWidth: true }
+                                                        Button {
+                                                            text: "Clear"
+                                                            onClicked: {
+                                                                if (root.appController.saveApiKey(providerCard.index, "")) {
+                                                                    keyField.clear();
+                                                                    root.refreshSettings();
+                                                                    root.showToast(providerCard.modelData + " key cleared");
+                                                                } else root.showErrorIfNeeded();
+                                                            }
+                                                        }
+                                                        Button {
+                                                            text: "Save"
+                                                            font.bold: true
+                                                            enabled: keyField.text.length > 0
+                                                            onClicked: {
+                                                                if (root.appController.saveApiKey(providerCard.index, keyField.text)) {
+                                                                    root.refreshSettings();
+                                                                    root.showToast(providerCard.modelData + " key saved");
+                                                                } else root.showErrorIfNeeded();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    spacing: 12
+                                    Label { text: "Models"; color: root.textColor; font.pixelSize: 20; font.bold: true }
+                                    Label { text: "Provider, model, effort, and role are configured per seat. Refresh the provider catalogs after updating credentials."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    Button { text: "Refresh model catalogs"; onClicked: root.appController.refreshModels() }
+                                    Repeater {
+                                        model: root.modelRefreshRows
+                                        delegate: PanelSurface {
+                                            id: modelStatusRow
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            implicitHeight: 58
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: 10
+                                                Label { text: modelStatusRow.modelData.provider || "Provider"; color: root.textColor; font.bold: true; Layout.fillWidth: true }
+                                                Label { text: modelStatusRow.modelData.status || "Not refreshed"; color: root.mutedColor; wrapMode: Text.Wrap }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    spacing: 10
+                                    Label { text: "Global hard stops"; color: root.textColor; font.pixelSize: 20; font.bold: true }
+                                    Label { text: "These mandatory limits stop provider work. Total tokens cannot be lower than per phase tokens, and session seconds cannot be lower than phase seconds."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    GridLayout {
+                                        Layout.fillWidth: true
+                                        columns: settingsContent.width >= 620 ? 2 : 1
+                                        columnSpacing: 10
+                                        rowSpacing: 8
+                                        Label { text: "Max tokens per phase"; color: root.textColor }
+                                        TextField { id: maxPhaseTokens; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
+                                        Label { text: "Max total tokens"; color: root.textColor }
+                                        TextField { id: maxTotalTokens; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
+                                        Label { text: "Max total cost (USD)"; color: root.textColor }
+                                        TextField { id: maxCost; Layout.fillWidth: true; inputMethodHints: Qt.ImhFormattedNumbersOnly; validator: DoubleValidator { bottom: 0.01; decimals: 2 } }
+                                        Label { text: "Max rounds"; color: root.textColor }
+                                        TextField { id: maxRounds; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
+                                        Label { text: "Max Execution / QC loops"; color: root.textColor }
+                                        TextField { id: maxLoops; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
+                                        Label { text: "Max phase seconds"; color: root.textColor }
+                                        TextField { id: maxPhaseSeconds; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
+                                        Label { text: "Max session seconds"; color: root.textColor }
+                                        TextField { id: maxSessionSeconds; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
+                                    }
+                                    Label { id: limitError; color: root.dangerColor; wrapMode: Text.Wrap; Layout.fillWidth: true; Accessible.role: Accessible.AlertMessage }
+                                    Button { text: "Save hard stops"; font.bold: true; onClicked: root.saveLimits() }
+                                }
+
+                                ColumnLayout {
+                                    spacing: 12
+                                    Label { text: "Attachment safeguards"; color: root.textColor; font.pixelSize: 20; font.bold: true }
+                                    Label { text: "These fixed production safeguards are enforced during import and cannot be weakened here."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    Repeater {
+                                        model: [
+                                            { label: "Maximum attachment size", value: (root.safeguards.maximumAttachmentMiB || 0) + " MiB hard stop" },
+                                            { label: "Free space reserve", value: (root.safeguards.freeSpaceReserveMiB || 0) + " MiB required" },
+                                            { label: "No progress timeout", value: (root.safeguards.noProgressTimeoutSeconds || 0) + " seconds" }
+                                        ]
+                                        delegate: PanelSurface {
+                                            id: safeguardRow
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            implicitHeight: 62
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: 11
+                                                Label { text: safeguardRow.modelData.label; color: root.textColor; font.bold: true; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                                Label { text: safeguardRow.modelData.value; color: root.mutedColor; horizontalAlignment: Text.AlignRight; wrapMode: Text.Wrap }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    spacing: 10
+                                    Label { text: "Appearance"; color: root.textColor; font.pixelSize: 20; font.bold: true }
+                                    Label { text: "Appearance, color theme, and font style are independent and persist across launches."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    Label { text: "Appearance"; color: root.textColor }
+                                    ComboBox { id: appearanceCombo; Layout.fillWidth: true; model: ["Light", "Dark", "System"]; onActivated: root.saveAppearanceFromControls() }
+                                    Label { text: "Color theme"; color: root.textColor }
+                                    ComboBox { id: themeCombo; Layout.fillWidth: true; model: ["Signal Session", "Calm Workspace"]; onActivated: root.saveAppearanceFromControls() }
+                                    Label { text: "Font style"; color: root.textColor }
+                                    ComboBox { id: fontCombo; Layout.fillWidth: true; model: ["System", "Workspace", "Console"]; onActivated: root.saveAppearanceFromControls() }
+                                    PanelSurface {
+                                        Layout.fillWidth: true
+                                        implicitHeight: 92
+                                        Column {
+                                            anchors.fill: parent
+                                            anchors.margins: 14
+                                            spacing: 6
+                                            Label { text: "Live preview"; color: root.textColor; font.bold: true }
+                                            Label { width: parent.width; text: (root.appearanceSettings.appearance || "System") + " | " + (root.appearanceSettings.colorTheme || "Signal Session") + " | " + (root.appearanceSettings.fontStyle || "System"); color: root.mutedColor; wrapMode: Text.Wrap }
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 8
-                        visible: logList.count === 0
-                        width: parent.width * 0.86
-                        Label {
-                            text: "Nothing Here Yet"
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#6b7280"
-                        }
-                        Label {
-                            text: "Run the table to generate content."
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.Wrap
-                            width: parent.width
-                            color: "#9ca3af"
-                        }
+                        Item { Layout.preferredHeight: 18 }
                     }
                 }
             }
         }
 
-        TabBar {
-            id: tabs
+        Rectangle {
+            visible: !root.desktopLayout
             Layout.fillWidth: true
-            currentIndex: root.selectedTab
-            onCurrentIndexChanged: root.selectedTab = currentIndex
-            TabButton {
-                text: "Table"
-            }
-            TabButton {
-                text: "Transcript"
-            }
-            TabButton {
-                text: "Artifacts"
-            }
-            TabButton {
-                text: "Log"
+            Layout.preferredHeight: 64
+            color: root.raisedColor
+            border.color: root.lineColor
+            border.width: 1
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 5
+                spacing: 4
+                NavButton { text: "Tables"; destination: 0 }
+                NavButton { text: "Session"; destination: 1 }
+                NavButton { text: "Event Log"; destination: 2 }
+                NavButton { text: "Settings"; destination: 3 }
             }
         }
     }
 
+    Rectangle {
+        visible: root.toastMessage.length > 0
+        z: 20
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: root.desktopLayout ? 18 : 78
+        width: Math.min(parent.width - 24, toastLabel.implicitWidth + 32)
+        height: 48
+        radius: 6
+        color: root.raisedColor
+        border.color: root.accentColor
+        border.width: 2
+        Label { id: toastLabel; anchors.centerIn: parent; text: root.toastMessage; color: root.textColor; Accessible.role: Accessible.AlertMessage }
+    }
+
     Dialog {
-        id: seatSheet
-        title: root.editingSeatIndex >= 0 ? "Seat " + (root.editingSeatIndex + 1) : "Seat"
+        id: seatDialog
+        title: root.editingSeat && root.editingSeat.occupied ? "Configure seat" : "Add Seat"
         modal: true
         standardButtons: Dialog.Save | Dialog.Cancel
-        width: Math.min(root.width - 32, 520)
+        width: Math.min(root.width - 24, 560)
+        height: Math.min(root.height - 36, 720)
         x: (root.width - width) / 2
-        y: Math.max(24, (root.height - height) / 2)
+        y: Math.max(18, (root.height - height) / 2)
         onAccepted: {
             var selectedModel = modelCombo.model && modelCombo.model.length > modelCombo.currentIndex ? modelCombo.model[modelCombo.currentIndex].id : "";
-            if (!root.appController.saveSeat(root.editingSeatIndex, occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex, root.editingSeat.color || "#49bd99")) {
-                root.showErrorIfNeeded();
-            }
+            if (!root.appController.saveSeat(root.editingSeatIndex, occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex, colorCombo.currentText)) root.showErrorIfNeeded();
         }
-
-        ColumnLayout {
-            width: parent.width
-            Switch {
-                id: occupiedSwitch
-                text: "Seat is occupied"
-            }
-            TextField {
-                id: seatNameField
-                placeholderText: "Display name"
-                Layout.fillWidth: true
-                enabled: occupiedSwitch.checked
-            }
-            ComboBox {
-                id: providerCombo
-                model: ["ChatGPT", "Gemini", "Claude"]
-                Layout.fillWidth: true
-                enabled: occupiedSwitch.checked
-                onCurrentIndexChanged: root.refreshModelCombo("")
-            }
-            ComboBox {
-                id: modelCombo
-                textRole: "displayName"
-                valueRole: "id"
-                Layout.fillWidth: true
-                enabled: occupiedSwitch.checked
-            }
-            ComboBox {
-                id: effortCombo
-                model: ["Auto", "Light", "Balanced", "Deep"]
-                Layout.fillWidth: true
-                enabled: occupiedSwitch.checked
-            }
-            ComboBox {
-                id: roleCombo
-                model: ["Participant", "Final Decision Maker", "Lead Planner", "Lead Executioner", "Lead Quality Control"]
-                Layout.fillWidth: true
-                enabled: occupiedSwitch.checked
+        contentItem: ScrollView {
+            id: seatScroll
+            clip: true
+            ColumnLayout {
+                width: seatScroll.availableWidth
+                spacing: 9
+                Switch { id: occupiedSwitch; text: "Seat is occupied" }
+                Label { text: "Seat name"; color: root.textColor }
+                TextField { id: seatNameField; Layout.fillWidth: true; enabled: occupiedSwitch.checked; placeholderText: "Display name"; Accessible.name: "Seat name" }
+                Label { text: "Role"; color: root.textColor }
+                ComboBox { id: roleCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; model: ["Participant", "Final Decision Maker", "Lead Planner", "Lead Executioner", "Lead Quality Control"] }
+                Label { text: "Provider"; color: root.textColor }
+                ComboBox { id: providerCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; model: ["OpenAI", "Gemini", "Anthropic"]; onActivated: root.refreshModelCombo("") }
+                Label { text: "Model"; color: root.textColor }
+                ComboBox { id: modelCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; textRole: "displayName"; valueRole: "id" }
+                Label { text: "Effort"; color: root.textColor }
+                ComboBox { id: effortCombo; Layout.fillWidth: true; enabled: occupiedSwitch.checked; model: ["Auto", "Light", "Balanced", "Deep"] }
+                Label { text: "Seat color"; color: root.textColor }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Rectangle { Layout.preferredWidth: 42; Layout.preferredHeight: 42; radius: 6; color: colorCombo.currentText; border.color: root.lineColor; border.width: 1 }
+                    ComboBox { id: colorCombo; Layout.fillWidth: true; model: ["#49bd99", "#e0a44d", "#6fa8dc", "#c27ba0", "#8e7cc3", "#76a5af", "#cc7a6f", "#93c47d"]; Accessible.name: "Seat color" }
+                }
+                Label { text: "Seat color appears as an accent and does not replace the speaker name or role."; color: root.mutedColor; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
         }
     }
 
     Dialog {
-        id: settingsSheet
-        title: "Settings"
+        id: artifactDialog
+        title: root.artifactPreviewTitle
         modal: true
         standardButtons: Dialog.Close
-        parent: Overlay.overlay
-        property real overlayWidth: parent && parent.width > 0 ? parent.width : root.width
-        property real overlayHeight: parent && parent.height > 0 ? parent.height : root.height
-        width: Math.min(overlayWidth - 32, 620)
-        x: Math.round((overlayWidth - width) / 2)
-        y: Math.round((overlayHeight - height) / 2)
-
-        contentItem: Flickable {
-            implicitWidth: Math.min(root.width - 96, 540)
-            implicitHeight: Math.max(320, Math.min(settingsSheet.overlayHeight - 360, 560))
-            contentWidth: width
-            contentHeight: settingsColumn.implicitHeight + 16
+        width: Math.min(root.width - 24, 760)
+        height: Math.min(root.height - 36, 720)
+        x: (root.width - width) / 2
+        y: Math.max(18, (root.height - height) / 2)
+        contentItem: ScrollView {
             clip: true
-            boundsBehavior: Flickable.StopAtBounds
-
-            ColumnLayout {
-                id: settingsColumn
-                width: parent.width
-                spacing: 12
-
-                Label {
-                    text: "Provider Credentials"
-                    font.pixelSize: 18
-                    font.bold: true
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Label {
-                        text: "OpenAI"
-                        font.bold: true
-                    }
-                    TextField {
-                        id: openAiKeyField
-                        placeholderText: "OpenAI API key"
-                        echoMode: TextInput.PasswordEchoOnEdit
-                        text: root.appController.apiKey(0)
-                        Layout.fillWidth: true
-                        onEditingFinished: {
-                            if (!root.appController.saveApiKey(0, text))
-                                root.showErrorIfNeeded();
-                        }
-                    }
-                    Label {
-                        text: root.appController.apiKeyStatus(0)
-                        color: "#4b5563"
-                        font.pixelSize: 12
-                    }
-
-                    Label {
-                        text: "Google"
-                        font.bold: true
-                    }
-                    TextField {
-                        id: googleKeyField
-                        placeholderText: "Google API key"
-                        echoMode: TextInput.PasswordEchoOnEdit
-                        text: root.appController.apiKey(1)
-                        Layout.fillWidth: true
-                        onEditingFinished: {
-                            if (!root.appController.saveApiKey(1, text))
-                                root.showErrorIfNeeded();
-                        }
-                    }
-                    Label {
-                        text: root.appController.apiKeyStatus(1)
-                        color: "#4b5563"
-                        font.pixelSize: 12
-                    }
-
-                    Label {
-                        text: "Anthropic"
-                        font.bold: true
-                    }
-                    TextField {
-                        id: anthropicKeyField
-                        placeholderText: "Anthropic API key"
-                        echoMode: TextInput.PasswordEchoOnEdit
-                        text: root.appController.apiKey(2)
-                        Layout.fillWidth: true
-                        onEditingFinished: {
-                            if (!root.appController.saveApiKey(2, text))
-                                root.showErrorIfNeeded();
-                        }
-                    }
-                    Label {
-                        text: root.appController.apiKeyStatus(2)
-                        color: "#4b5563"
-                        font.pixelSize: 12
-                    }
-                }
-                Button {
-                    text: "Refresh Models"
-                    Layout.fillWidth: true
-                    onClicked: root.saveProviderKeysAndRefresh()
-                }
-                Repeater {
-                    model: root.modelRefreshRows
-                    delegate: Label {
-                        id: modelRefreshLabel
-                        required property var modelData
-
-                        text: modelRefreshLabel.modelData.message
-                        color: modelRefreshLabel.modelData.success ? (modelRefreshLabel.modelData.fallback ? "#92400e" : "#166534") : "#991b1b"
-                        wrapMode: Text.Wrap
-                        Layout.fillWidth: true
-                    }
-                }
-
-                Label {
-                    text: "Global Hard Stops"
-                    font.pixelSize: 18
-                    font.bold: true
-                }
-                GridLayout {
-                    columns: 2
-                    Layout.fillWidth: true
-                    TextField {
-                        id: maxPhaseTokens
-                        placeholderText: "Max tokens per phase"
-                        text: "12000"
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        Layout.fillWidth: true
-                    }
-                    TextField {
-                        id: maxTotalTokens
-                        placeholderText: "Max total tokens"
-                        text: "48000"
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        Layout.fillWidth: true
-                    }
-                    TextField {
-                        id: maxCost
-                        placeholderText: "Max cost"
-                        text: "10.00"
-                        inputMethodHints: Qt.ImhFormattedNumbersOnly
-                        Layout.fillWidth: true
-                    }
-                    TextField {
-                        id: maxRounds
-                        placeholderText: "Max rounds"
-                        text: "6"
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        Layout.fillWidth: true
-                    }
-                    TextField {
-                        id: maxLoops
-                        placeholderText: "Max Exec/QC loops"
-                        text: "4"
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        Layout.fillWidth: true
-                    }
-                    TextField {
-                        id: maxPhaseSeconds
-                        placeholderText: "Phase seconds"
-                        text: "120"
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        Layout.fillWidth: true
-                    }
-                    TextField {
-                        id: maxSessionSeconds
-                        placeholderText: "Session seconds"
-                        text: "900"
-                        inputMethodHints: Qt.ImhDigitsOnly
-                        Layout.fillWidth: true
-                    }
-                }
-                Button {
-                    text: "Save Hard Stops"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        if (!root.appController.saveGlobalBudget(Number(maxPhaseTokens.text), Number(maxTotalTokens.text), Number(maxCost.text), Number(maxRounds.text), Number(maxLoops.text), Number(maxPhaseSeconds.text), Number(maxSessionSeconds.text))) {
-                            root.showErrorIfNeeded();
-                        }
-                    }
-                }
+            TextArea {
+                text: root.artifactPreviewBody
+                textFormat: TextEdit.MarkdownText
+                readOnly: true
+                wrapMode: TextArea.Wrap
+                color: root.textColor
+                Accessible.name: "Artifact preview"
             }
-        }
-    }
-
-    FileDialog {
-        id: attachmentDialog
-        title: "Choose Attachment"
-        onAccepted: {
-            if (!root.appController.addAttachment(attachmentDialog.selectedFile))
-                root.showErrorIfNeeded();
         }
     }
 
     Dialog {
         id: createTableDialog
-        title: "Create Meeting Table"
+        title: "Create meeting table"
         modal: true
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        width: Math.min(root.width - 32, 420)
+        standardButtons: Dialog.Save | Dialog.Cancel
+        width: Math.min(root.width - 24, 460)
         x: (root.width - width) / 2
-        y: Math.max(24, (root.height - height) / 2)
-        onAccepted: root.appController.createTable(createTitle.text, Number(createSeats.currentText))
+        onAccepted: { if (!root.appController.createTable(createTitle.text, Number(createSeats.currentText))) root.showErrorIfNeeded(); else root.selectedPage = 1; }
         ColumnLayout {
             width: parent.width
-            TextField {
-                id: createTitle
-                text: "New Meeting Table"
-                Layout.fillWidth: true
-            }
-            ComboBox {
-                id: createSeats
-                model: ["1", "2", "3", "4", "5", "6", "7", "8"]
-                currentIndex: 3
-                Layout.fillWidth: true
-            }
+            Label { text: "Table title"; color: root.textColor }
+            TextField { id: createTitle; Layout.fillWidth: true; text: "New Meeting Table"; selectByMouse: true }
+            Label { text: "Initial seats"; color: root.textColor }
+            ComboBox { id: createSeats; Layout.fillWidth: true; model: ["1", "2", "3", "4", "5", "6", "7", "8"]; currentIndex: 3 }
         }
     }
 
     Dialog {
         id: renameDialog
-        title: "Rename Table"
+        title: "Rename table"
         modal: true
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        width: Math.min(root.width - 32, 420)
+        standardButtons: Dialog.Save | Dialog.Cancel
+        width: Math.min(root.width - 24, 460)
         x: (root.width - width) / 2
-        y: Math.max(24, (root.height - height) / 2)
-        onAccepted: {
-            if (!root.appController.renameCurrentTable(renameField.text))
-                root.showErrorIfNeeded();
-        }
-        TextField {
-            id: renameField
-            width: parent.width
-        }
+        onAccepted: { if (!root.appController.renameCurrentTable(renameField.text)) root.showErrorIfNeeded(); }
+        TextField { id: renameField; width: parent.width; Accessible.name: "Table title" }
     }
 
     MessageDialog {
         id: deleteDialog
-        title: "Delete Meeting Table"
-        text: "Delete this table and its transcript, log, and artifact history?"
+        title: "Delete table"
+        text: "Delete this meeting table and its stored session data?"
         buttons: MessageDialog.Yes | MessageDialog.No
-        onButtonClicked: function (button, role) {
-            if (button === MessageDialog.Yes)
-                root.appController.deleteCurrentTable();
-        }
+        onButtonClicked: function (button) { if (button === MessageDialog.Yes && !root.appController.deleteCurrentTable()) root.showErrorIfNeeded(); }
     }
 
-    MessageDialog {
-        id: errorDialog
-        title: "AI Meeting Table"
-        buttons: MessageDialog.Ok
-    }
+    MessageDialog { id: errorDialog; title: "Action could not be completed"; buttons: MessageDialog.Ok }
+    MessageDialog { id: continuationDialog; title: "Continuation required"; buttons: MessageDialog.Ok }
 
-    MessageDialog {
-        id: continuationDialog
-        title: "Continuation Required"
-        buttons: MessageDialog.Ok
+    FileDialog {
+        id: attachmentDialog
+        title: "Select attachment"
+        fileMode: FileDialog.OpenFile
+        onAccepted: { if (!root.appController.addAttachment(selectedFile)) root.showErrorIfNeeded(); }
     }
 }

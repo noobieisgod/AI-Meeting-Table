@@ -1037,11 +1037,11 @@ void MobileAppController::notifyStateChange(const SessionState &state, bool tabl
     }
 
     emit stateChanged();
-    if (previous.activeSeatId != current.activeSeatId
-        || previous.seatConfiguration != current.seatConfiguration) {
+    const bool seatConfigurationChanged = previous.seatConfiguration != current.seatConfiguration;
+    if (previous.activeSeatId != current.activeSeatId || seatConfigurationChanged) {
         emit seatsChanged();
     }
-    if (previous.transcriptCount != current.transcriptCount) {
+    if (previous.transcriptCount != current.transcriptCount || seatConfigurationChanged) {
         emit transcriptChanged();
     }
     if (previous.attachmentCount != current.attachmentCount) {
