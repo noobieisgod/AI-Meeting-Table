@@ -754,16 +754,43 @@ ApplicationWindow {
                                             clip: true
                                             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                                             ScrollBar.vertical.policy: composer.contentHeight + 24 > composerScroll.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                                            background: Rectangle {
+                                                color: root.backgroundColor
+                                                border.color: composer.activeFocus ? root.accentColor : root.lineColor
+                                                border.width: composer.activeFocus ? 2 : 1
+                                                radius: 6
+                                                Label {
+                                                    visible: composer.text.length === 0
+                                                    anchors.left: parent.left
+                                                    anchors.top: parent.top
+                                                    anchors.leftMargin: 12
+                                                    anchors.topMargin: 12
+                                                    width: parent.width - 24
+                                                    text: "Add instructions, context, or a follow up question"
+                                                    color: root.mutedColor
+                                                    wrapMode: Text.Wrap
+                                                }
+                                            }
                                             TextArea {
                                                 id: composer
                                                 width: composerScroll.availableWidth
                                                 implicitHeight: Math.max(composerScroll.availableHeight, contentHeight + topPadding + bottomPadding)
-                                                placeholderText: "Add instructions, context, or a follow up question"
+                                                topPadding: 12
+                                                bottomPadding: 12
+                                                leftPadding: 12
+                                                rightPadding: 12
                                                 wrapMode: TextEdit.WrapAnywhere
                                                 color: root.textColor
                                                 selectByMouse: true
                                                 Accessible.name: "Message to the table"
-                                                background: Rectangle { color: root.backgroundColor; border.color: composer.activeFocus ? root.accentColor : root.lineColor; border.width: composer.activeFocus ? 2 : 1; radius: 6 }
+                                                Accessible.description: "Add instructions, context, or a follow up question"
+                                                background: null
+                                                onTextChanged: {
+                                                    if (text.length === 0 && composerScroll.contentItem) composerScroll.contentItem.contentY = 0;
+                                                }
+                                                Component.onCompleted: Qt.callLater(function () {
+                                                    if (text.length === 0 && composerScroll.contentItem) composerScroll.contentItem.contentY = 0;
+                                                })
                                             }
                                         }
                                         RowLayout {
