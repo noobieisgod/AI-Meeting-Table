@@ -15,6 +15,7 @@ private slots:
   void arbitrationTransitionsRouteCorrections();
   void responseParsingRemainsStable();
   void budgetBoundariesAndContinuationOverrides();
+  void phaseLeadsRunLastAndQcConverges();
 };
 
 void CoreTests::roleValidationAndSerialization() {
@@ -54,8 +55,9 @@ void CoreTests::roleValidationAndSerialization() {
   policy.maxTokensPerPhase = 321;
   policy.maxTotalTokens = 654;
   policy.maxTotalCost = 7.5;
-  QCOMPARE(budgetPolicyFromJson(budgetPolicyToJson(policy)).maxTotalTokens,
-           654);
+  const BudgetPolicy restoredPolicy = budgetPolicyFromJson(budgetPolicyToJson(policy));
+  QCOMPARE(restoredPolicy.maxTotalTokens, 654);
+  QCOMPARE(restoredPolicy.maxTotalCost, 7.5);
 }
 
 void CoreTests::workflowTransitionsRemainStable() {
@@ -207,16 +209,93 @@ void CoreTests::budgetBoundariesAndContinuationOverrides() {
            static_cast<int>(BudgetLimitAction::EndPhase));
 
   SessionState totals;
-  manager.applyUsage(totals, "seat-1", 100, 0.25, false, true);
-  manager.applyUsage(totals, "seat-2", 40, 0.0, true, false);
+  manager.applyUsage(totals, "seat-1", 60, 40, 100);
+  manager.applyUsage(totals, "seat-2", 25, 15, 40, true);
   QCOMPARE(totals.usedTokens, 140);
   QCOMPARE(totals.phaseUsedTokens, 140);
-  QVERIFY(qFuzzyCompare(totals.usedCost, 0.25));
   QCOMPARE(totals.seatUsage.size(), 2);
   QCOMPARE(totals.seatUsage.first().totalTokens, 100);
   QCOMPARE(totals.seatUsage.last().totalTokens, 40);
+  QCOMPARE(totals.seatUsage.first().inputTokens, 60);
+  QCOMPARE(totals.seatUsage.first().outputTokens, 40);
   QVERIFY(totals.usageEstimateUsed);
-  QVERIFY(!totals.costEstimateComplete);
+}
+
+void CoreTests::phaseLeadsRunLastAndQcConverges() {
+  SessionState state;
+  state.tableId = "convergence";
+  state.round = 1;
+
+  const auto seat = [](const QString &id, Role role) {
+    SeatConfig value;
+    value.seatId = id;
+    value.displayName = id;
+    value.role = role;
+    value.occupied = true;
+    value.enabled = true;
+    return value;
+  };
+  state.seats = {
+      seat("planner", Role::LeadPlanner),
+      seat("execution", Role::LeadExecutioner),
+      seat("participant", Role::None),
+      seat("quality", Role::LeadQualityControl),
+      seat("decision", Role::FinalDecisionMaker)};
+  state.finalDecisionMakerSeatId = "decision";
+
+  state.phase = Phase::Planning;
+  QCOMPARE(activeSeatIdsForPhase(state).last(), QString("planner"));
+  state.phase = Phase::Execution;
+  QCOMPARE(activeSeatIdsForPhase(state).last(), QString("execution"));
+  state.phase = Phase::QualityControl;
+  QCOMPARE(activeSeatIdsForPhase(state).last(), QString("quality"));
+
+  TranscriptEntry participantReview;
+  participantReview.entryId = "participant-review";
+  participantReview.phase = Phase::QualityControl;
+  participantReview.round = 1;
+  participantReview.speakerSeatId = "participant";
+  participantReview.content = "Optional improvement: tighten one sentence.";
+  state.transcript.append(participantReview);
+  TranscriptEntry consolidatedReview = participantReview;
+  consolidatedReview.entryId = "quality-review";
+  consolidatedReview.speakerSeatId = "quality";
+  consolidatedReview.content =
+      "**Blocking correctness issues:**\nNone\nOptional improvements: tighten one sentence.\nOpen findings: None\nResolved findings: counts verified.";
+  state.transcript.append(consolidatedReview);
+  state.activeSeatId = "quality";
+  state.currentArtifactVersionId = "draft-v1";
+
+  WorkflowEngine engine;
+  WorkflowEvent completed;
+  completed.eventType = EventType::TurnCompleted;
+  completed.payload.insert("seatId", "quality");
+  auto commands = engine.handleEvent(state, completed);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Present));
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Present));
+
+  state.phase = Phase::QualityControl;
+  WorkflowEvent revise;
+  revise.eventType = EventType::DecisionIssued;
+  revise.payload.insert("mode", "arbitration");
+  revise.payload.insert("outcome", "Revise");
+  const qsizetype transcriptCount = state.transcript.size();
+  commands = engine.handleEvent(state, revise);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Execution));
+  QCOMPARE(state.execQcLoopCount, 1);
+  QCOMPARE(state.currentArtifactVersionId, QString("draft-v1"));
+  QCOMPARE(state.transcript.size(), transcriptCount);
+
+  state.phase = Phase::Present;
+  WorkflowEvent approved;
+  approved.eventType = EventType::DecisionIssued;
+  approved.payload.insert("outcome", "Approve");
+  commands = engine.handleEvent(state, approved);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Completed));
+  QCOMPARE(state.execQcLoopCount, 1);
+  QCOMPARE(static_cast<int>(commands.first().commandType),
+           static_cast<int>(RunnerCommandType::StopSession));
 }
 
 QTEST_GUILESS_MAIN(CoreTests)

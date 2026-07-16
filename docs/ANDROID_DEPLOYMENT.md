@@ -860,7 +860,7 @@ QStandardPaths::AppDataLocation/ai_meeting_table.db
 QStandardPaths::AppDataLocation/artifacts/<artifact-version-id>.md
 ```
 
-- The database persists table metadata, transcript entries, artifact metadata, log events, attachments, queued input ids, current artifact id, budget state, token and cost counters, phase state, seat settings, and table settings.
+- The database persists table metadata, transcript entries, artifact metadata, log events, attachments, queued input ids, current artifact id, token hard-stop state, token counters, phase state, seat settings, and table settings. Legacy cost fields remain readable only for backward compatibility.
 - API keys remain in the secure credential store and are not written to the session database.
 - Provider request bodies, auth headers, and in-flight network internals are not persisted.
 
@@ -919,7 +919,7 @@ Create a short markdown checklist for packing a school backpack for tomorrow.
 
 Verification checklist:
 - Send a message, close the app, reopen, and confirm the message remains in Transcript.
-- Run or stop a table, close the app, reopen, and confirm Transcript, Artifacts, Log, phase, round, tokens, cost, current artifact id, attachments, and table settings remain.
+- Run or stop a table, close the app, reopen, and confirm Transcript, Artifacts, Log, phase, round, input/output/total tokens, current artifact id, attachments, and table settings remain.
 - Background the app and reopen it without losing the current table.
 - Force stop the app and launch again without losing local session history.
 - Confirm artifact markdown content renders from app-private storage without network access.

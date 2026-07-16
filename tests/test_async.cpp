@@ -2,6 +2,10 @@
 
 #include <algorithm>
 
+#include <QFile>
+#include <QRegularExpression>
+#include <QStandardPaths>
+
 #include "core/event_bus.h"
 #include "core/session_runner.h"
 #include "core/workflow_engine.h"
@@ -56,7 +60,6 @@ ProviderResponse responseFor(const ProviderRequest &request,
   response.content = content;
   response.decisionOutcome = outcome;
   response.usageReported = true;
-  response.costKnown = true;
   response.runGeneration = request.runGeneration;
   return response;
 }
@@ -67,6 +70,7 @@ class AsyncTests final : public QObject {
   Q_OBJECT
 
 private slots:
+  void initTestCase();
   void unknownAndGenerationStaleResponsesAreRejected();
   void duplicateArbitrationResponseIsConsumedOnce();
   void phaseAndRoundStaleResponsesAreRejected();
@@ -74,7 +78,15 @@ private slots:
   void presentProceedAliasCompletesOnce();
   void outcomeUnknownDoesNotRecordConfirmedUsage();
   void malformedOutputPausesAndPreservesSession();
+  void convergencePromptsPreserveArtifactAuthority();
+  void convergenceFixtureCompletesAfterOneTargetedRevision();
 };
+
+void AsyncTests::initTestCase() {
+  QStandardPaths::setTestModeEnabled(true);
+  QCoreApplication::setOrganizationName("AI Meeting Table Tests");
+  QCoreApplication::setApplicationName("Async Tests");
+}
 
 void AsyncTests::unknownAndGenerationStaleResponsesAreRejected() {
   auto state = makeSession(Phase::Research);
@@ -295,7 +307,6 @@ void AsyncTests::presentProceedAliasCompletesOnce() {
 void AsyncTests::outcomeUnknownDoesNotRecordConfirmedUsage() {
   auto state = makeSession(Phase::Planning);
   state->usedTokens = 11;
-  state->usedCost = 0.25;
   EventBus eventBus;
   WorkflowEngine workflow;
   FakeProviderGateway gateway;
@@ -323,14 +334,12 @@ void AsyncTests::outcomeUnknownDoesNotRecordConfirmedUsage() {
   unknown.success = false;
   unknown.deliveryOutcome = ProviderDeliveryOutcome::OutcomeUnknown;
   unknown.usedTokens = 9000;
-  unknown.estimatedCost = 99.0;
   unknown.errorMessage =
       "The provider may have completed the request, but the app did not receive a confirmed result. Trying again could duplicate provider work or usage.";
   unknown.runGeneration = gateway.requests.first().runGeneration;
   gateway.responseReady(unknown);
 
   QCOMPARE(state->usedTokens, 11);
-  QCOMPARE(state->usedCost, 0.25);
   QVERIFY(state->paused);
   QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
   QVERIFY(std::any_of(state->log.cbegin(), state->log.cend(),
@@ -344,10 +353,8 @@ void AsyncTests::outcomeUnknownDoesNotRecordConfirmedUsage() {
   ProviderResponse success =
       responseFor(gateway.requests.last(), {}, "Confirmed response");
   success.usedTokens = 7;
-  success.estimatedCost = 0.01;
   gateway.responseReady(success);
   QCOMPARE(state->usedTokens, 18);
-  QVERIFY(qFuzzyCompare(state->usedCost, 0.26));
 }
 
 void AsyncTests::malformedOutputPausesAndPreservesSession() {
@@ -389,7 +396,6 @@ void AsyncTests::malformedOutputPausesAndPreservesSession() {
   malformed.errorMessage = "OpenAI returned no user-visible assistant text.";
   malformed.usedTokens = 12;
   malformed.usageReported = true;
-  malformed.costKnown = false;
   malformed.runGeneration = gateway.requests.first().runGeneration;
   gateway.responseReady(malformed);
 
@@ -411,6 +417,226 @@ void AsyncTests::malformedOutputPausesAndPreservesSession() {
   QCOMPARE(gateway.requests.size(), 2);
   QCOMPARE(gateway.requests.last().seatId, QString("seat-participant"));
   QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Planning));
+}
+
+void AsyncTests::convergencePromptsPreserveArtifactAuthority() {
+  auto state = makeSession(Phase::Execution);
+  SeatConfig leadExecution = state->seats.first();
+  leadExecution.seatId = "seat-execution";
+  leadExecution.displayName = "Execution";
+  leadExecution.role = Role::LeadExecutioner;
+  state->seats.append(leadExecution);
+  SeatConfig leadQuality = leadExecution;
+  leadQuality.seatId = "seat-quality";
+  leadQuality.displayName = "Quality Control";
+  leadQuality.role = Role::LeadQualityControl;
+  state->seats.append(leadQuality);
+
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  WorkflowCommand turn;
+  turn.commandType = RunnerCommandType::RequestSeatTurn;
+  turn.sessionId = state->tableId;
+  turn.targetPhase = state->phase;
+  turn.targetSeatId = "seat-participant";
+  runner.executeCommand(*state, turn);
+  QVERIFY(gateway.requests.last().prompt.value("instruction").toString().contains(
+      "Do not present an authoritative artifact"));
+  gateway.responseReady(
+      responseFor(gateway.requests.last(), {}, "One new constraint only."));
+  QVERIFY(state->artifacts.isEmpty());
+  runner.discardSession(state->tableId);
+
+  turn.targetSeatId = leadExecution.seatId;
+  runner.executeCommand(*state, turn);
+  const QString executionPrompt =
+      gateway.requests.last().prompt.value("instruction").toString();
+  QVERIFY(executionPrompt.contains("patch only the unresolved corrections"));
+  QVERIFY(executionPrompt.contains("exact numbered-step"));
+
+  state->phase = Phase::QualityControl;
+  turn.targetPhase = state->phase;
+  turn.targetSeatId = leadQuality.seatId;
+  runner.executeCommand(*state, turn);
+  const QString qualityPrompt =
+      gateway.requests.last().prompt.value("instruction").toString();
+  QVERIFY(qualityPrompt.contains("Blocking correctness issues:"));
+  QVERIFY(qualityPrompt.contains("Resolved findings:"));
+  QVERIFY(qualityPrompt.contains("Optional wording or style improvements"));
+
+  WorkflowCommand decision;
+  decision.commandType = RunnerCommandType::RequestDecision;
+  decision.sessionId = state->tableId;
+  decision.targetPhase = state->phase;
+  decision.targetSeatId = state->finalDecisionMakerSeatId;
+  decision.payload.insert("mode", "arbitration");
+  runner.executeCommand(*state, decision);
+  const QString decisionPrompt =
+      gateway.requests.last().prompt.value("instruction").toString();
+  QVERIFY(decisionPrompt.contains("list only those unresolved corrections"));
+  QVERIFY(decisionPrompt.contains("Optional wording or style improvements must not trigger another loop"));
+  runner.discardSession(state->tableId);
+}
+
+void AsyncTests::convergenceFixtureCompletesAfterOneTargetedRevision() {
+  auto state = makeSession(Phase::Planning);
+  state->title = "Three-step school supply plan";
+
+  SeatConfig planner = state->seats.first();
+  planner.seatId = "seat-planner";
+  planner.displayName = "Planner";
+  planner.role = Role::LeadPlanner;
+  SeatConfig execution = planner;
+  execution.seatId = "seat-execution";
+  execution.displayName = "Execution";
+  execution.role = Role::LeadExecutioner;
+  SeatConfig quality = planner;
+  quality.seatId = "seat-quality";
+  quality.displayName = "Quality Control";
+  quality.role = Role::LeadQualityControl;
+  state->seats.insert(1, planner);
+  state->seats.insert(2, execution);
+  state->seats.insert(3, quality);
+
+  TranscriptEntry objective;
+  objective.entryId = "objective";
+  objective.tableId = state->tableId;
+  objective.phase = Phase::Idle;
+  objective.round = 1;
+  objective.isUser = true;
+  objective.speakerName = "You";
+  objective.content = "Produce a plan with headings Steps, Risks, and Acceptance checks; exactly 3 steps, 2 risks, and 2 acceptance checks; no more than 90 words; do not claim guaranteed outcomes.";
+  state->transcript.append(objective);
+
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  const auto answerPending = [&](const QString &content,
+                                 const QString &outcome = QString{}) {
+    const qsizetype previousRequestCount = gateway.requests.size();
+    runner.resumeSession(*state);
+    QCOMPARE(gateway.requests.size(), previousRequestCount + 1);
+    gateway.responseReady(responseFor(gateway.requests.last(), outcome, content));
+  };
+
+  WorkflowCommand startExecution;
+  startExecution.commandType = RunnerCommandType::StartPhase;
+  startExecution.sessionId = state->tableId;
+  startExecution.targetPhase = Phase::Execution;
+  runner.executeCommand(*state, startExecution);
+
+  answerPending("Use simple verbs and avoid guarantees.");
+  answerPending("Keep the result under 90 words.");
+  answerPending("Check every requested count together.");
+  QVERIFY(state->artifacts.isEmpty());
+
+  const QString draft =
+      "# Steps\n1. List supplies.\n2. Pack supplies.\n"
+      "# Risks\n1. A needed item may be unavailable.\n2. A label may detach.\n"
+      "# Acceptance checks\n1. Confirm the bag is labeled.";
+  answerPending(draft);
+  QCOMPARE(state->artifacts.size(), 1);
+  const QString firstVersionId = state->currentArtifactVersionId;
+
+  answerPending("The draft is missing one step and one acceptance check.");
+  answerPending("No additional blocking issue.");
+  answerPending("The draft can be patched without replacement.");
+  answerPending(
+      "Blocking correctness issues:\n"
+      "1. Steps has 2 items instead of 3.\n"
+      "2. Acceptance checks has 1 item instead of 2.\n"
+      "Optional improvements: None.\n"
+      "Open findings: item counts.\n"
+      "Resolved findings: headings and risks are correct.");
+  answerPending("Patch only the two item-count findings.\nFINAL_RULING: REVISE",
+                "Revise");
+  QCOMPARE(state->execQcLoopCount, 1);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Execution));
+
+  answerPending("No new constraint.");
+  answerPending("Preserve the existing draft and patch the counts.");
+  answerPending("No new blocking issue.");
+  const QString revised =
+      "# Steps\n"
+      "1. List required supplies.\n"
+      "2. Pack each item.\n"
+      "3. Label the bag.\n"
+      "# Risks\n"
+      "1. A needed item may be unavailable.\n"
+      "2. A label may detach.\n"
+      "# Acceptance checks\n"
+      "1. Confirm all listed items are packed.\n"
+      "2. Confirm the owner can read the label.";
+  answerPending(revised);
+  QCOMPARE(state->artifacts.size(), 2);
+  QCOMPARE(state->artifacts.last().parentVersionId, firstVersionId);
+
+  answerPending("Optional improvement: shorten one verb.");
+  answerPending("No new blocking issue.");
+  answerPending("The targeted count corrections are present.");
+  const QString acceptedReview =
+      "Blocking correctness issues: None\n"
+      "Optional improvements: shorten one verb if desired.\n"
+      "Open findings: None\n"
+      "Resolved findings: headings, counts, word limit, and prohibited claims checked.";
+  answerPending(acceptedReview);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Present));
+  QCOMPARE(state->execQcLoopCount, 1);
+
+  answerPending("The corrected artifact satisfies every blocking requirement.\nFINAL_RULING: APPROVE",
+                "Approve");
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Completed));
+  QCOMPARE(state->execQcLoopCount, 1);
+  QCOMPARE(gateway.requests.size(), 18);
+
+  QFile artifactFile(state->artifacts.last().filePath);
+  QVERIFY(artifactFile.open(QIODevice::ReadOnly | QIODevice::Text));
+  const QString finalArtifact = QString::fromUtf8(artifactFile.readAll());
+  QCOMPARE(finalArtifact, revised);
+  QVERIFY(finalArtifact.contains("# Steps"));
+  QVERIFY(finalArtifact.contains("# Risks"));
+  QVERIFY(finalArtifact.contains("# Acceptance checks"));
+  QVERIFY(!finalArtifact.contains("guarantee", Qt::CaseInsensitive));
+
+  const auto numberedCount = [&](const QString &heading,
+                                 const QString &nextHeading) {
+    const qsizetype start = finalArtifact.indexOf(heading) + heading.size();
+    const qsizetype end = nextHeading.isEmpty()
+        ? finalArtifact.size()
+        : finalArtifact.indexOf(nextHeading, start);
+    const QString section = finalArtifact.mid(start, end - start);
+    return section.count(QRegularExpression("(?m)^\\d+\\."));
+  };
+  QCOMPARE(numberedCount("# Steps", "# Risks"), 3);
+  QCOMPARE(numberedCount("# Risks", "# Acceptance checks"), 2);
+  QCOMPARE(numberedCount("# Acceptance checks", {}), 2);
+  const int wordCount = finalArtifact.split(
+      QRegularExpression("\\s+"), Qt::SkipEmptyParts).size();
+  QVERIFY(wordCount <= 90);
+
+  for (const auto &artifact : state->artifacts) {
+    QFile::remove(artifact.filePath);
+  }
+  runner.discardSession(state->tableId);
 }
 
 QTEST_GUILESS_MAIN(AsyncTests)

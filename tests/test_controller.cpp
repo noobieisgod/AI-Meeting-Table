@@ -25,6 +25,8 @@ private slots:
   void granularSignalsOnlyRefreshChangedCollections();
   void fullTranscriptTextPreservesOrderAndMetadata();
   void budgetValidationRejectsInvalidRelationships();
+  void legacyTokenBreakdownIsNotReportedAsZero();
+  void credentialStatusExposesNoStoredSecret();
   void appearanceAndSeatColorAreExposed();
   void missingAttachmentCannotBeOpened();
   void attachmentCleanupIsReferenceAndPathSafe();
@@ -101,12 +103,50 @@ void ControllerTests::fullTranscriptTextPreservesOrderAndMetadata() {
 void ControllerTests::budgetValidationRejectsInvalidRelationships() {
   MobileAppController controller;
   QVERIFY(controller.initialize());
-  QVERIFY(!controller.saveGlobalBudget(1000, 999, 1.0, 1, 1, 10, 20));
+  QVERIFY(!controller.saveGlobalBudget(1000, 999, 1, 1, 10, 20));
   QVERIFY(controller.lastError().contains("total tokens"));
-  QVERIFY(!controller.saveGlobalBudget(1000, 2000, 1.0, 1, 1, 30, 20));
+  QVERIFY(!controller.saveGlobalBudget(1000, 2000, 1, 1, 30, 20));
   QVERIFY(controller.lastError().contains("session seconds"));
-  QVERIFY(!controller.saveGlobalBudget(0, 2000, 1.0, 1, 1, 10, 20));
+  QVERIFY(!controller.saveGlobalBudget(0, 2000, 1, 1, 10, 20));
   QVERIFY(controller.lastError().contains("positive"));
+}
+
+void ControllerTests::legacyTokenBreakdownIsNotReportedAsZero() {
+  MobileAppController controller;
+
+  SessionState legacy;
+  legacy.usedTokens = 12085;
+  QVERIFY(!controller.tableSummary(legacy).value("tokenBreakdownKnown").toBool());
+
+  SeatUsageTally usage;
+  usage.inputTokens = 9000;
+  usage.outputTokens = 3085;
+  legacy.seatUsage.append(usage);
+  const QVariantMap current = controller.tableSummary(legacy);
+  QVERIFY(current.value("tokenBreakdownKnown").toBool());
+  QCOMPARE(current.value("inputTokens").toInt(), 9000);
+  QCOMPARE(current.value("outputTokens").toInt(), 3085);
+}
+
+void ControllerTests::credentialStatusExposesNoStoredSecret() {
+  MobileAppController controller;
+  QVERIFY(controller.initialize());
+  const QString secret = "synthetic-controller-secret-fragment";
+
+  QCOMPARE(controller.metaObject()->indexOfMethod("apiKey(int)"), -1);
+  QCOMPARE(controller.metaObject()->indexOfMethod("apiKeyStatus(int)"), -1);
+  QVERIFY(controller.saveApiKey(0, secret));
+  QVERIFY(controller.hasCredential(0));
+  const QVariantMap settings = controller.settings();
+  for (auto it = settings.cbegin(); it != settings.cend(); ++it) {
+    QVERIFY(!it.value().toString().contains(secret));
+  }
+  for (const QVariant &entry : controller.logs()) {
+    QVERIFY(!entry.toMap().value("summary").toString().contains(secret));
+  }
+
+  QVERIFY(controller.saveApiKey(0, ""));
+  QVERIFY(!controller.hasCredential(0));
 }
 
 void ControllerTests::appearanceAndSeatColorAreExposed() {

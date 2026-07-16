@@ -28,7 +28,9 @@ Attachments use the existing picker beside the composer and the backend import p
 
 Provider adapters accept only provider-specific user-visible response fields. OpenAI output text and supported refusal blocks are extracted explicitly. Anthropic text blocks are extracted while thinking, signatures, metadata, and other non-visible blocks are ignored. A malformed response or a response without visible content is recorded as a redacted failure and pauses the recoverable session instead of entering opaque data into the transcript or completing the phase. Outcome-unknown requests remain paused for explicit user continuation and are never automatically replayed.
 
-Usage telemetry prefers final provider-reported input and output counts. When usage must be estimated, the token display says Approx. Cached or otherwise incomplete pricing makes the cost display unavailable rather than presenting false precision. Known partial usage from a definite provider failure is retained once, while outcome-unknown usage remains unconfirmed. Backend hard stops continue to own enforcement.
+Usage telemetry shows input, output, and total token counts and prefers final provider-reported usage. When usage must be estimated, the total says Approx. Known partial usage from a definite provider failure is retained once, while outcome-unknown usage remains unconfirmed. Monetary cost controls, telemetry, pricing estimates, and execution stops are retired because pricing cannot be enforced reliably across every supported model. Legacy stored cost fields remain readable for compatibility but do not affect execution. Token, round, loop, phase-time, and session-time hard stops remain backend-owned.
+
+Sequential Planning, Execution, and Quality Control turns place the phase lead after participant input. Participants are prompted to add only concise new information. The Lead Executioner produces or patches the authoritative artifact directly and silently checks requested headings, counts, limits, prohibited claims, and unresolved blocking findings. Lead Quality Control consolidates blocking issues, optional improvements, open findings, and resolved findings in one review. Resolved findings are not reopened without new contradictory evidence, and optional wording changes do not require another execution loop. Continuation preserves the transcript, artifact, findings context, counters, and exact pending action.
 
 ## Event Log
 
@@ -40,11 +42,11 @@ Settings is a full primary page with focused subsections:
 
 - Providers: secure OpenAI, Gemini, and Anthropic credential entry and status
 - Models: provider defaults and supported model choices
-- Global hard stops: required backend-enforced budget, token, request, session, artifact, and timeout limits
+- Global hard stops: backend-enforced token, round, Execution/Quality Control loop, phase-time, and session-time limits
 - Attachment safeguards: backend-owned fixed limits and explanatory status
 - Appearance: Light, Dark, or System appearance; Signal Session or Calm Workspace color theme; System, Workspace, or Console system-font preference
 
-Persisted credentials use the existing secure credential store. QML receives provider status and a masked hint, never a complete saved key. Replacement fields start empty, use password masking, and do not log or copy credentials. Provider calls, hard-stop enforcement, attachment safeguards, and retry decisions remain in C++ and backend services.
+Persisted credentials use the existing secure credential store. QML receives only whether a provider credential exists and displays Saved or Not saved. It receives no stored key, masked hint, prefix, suffix, or fingerprint. Replacement fields start empty, clear after saving, use password masking, and do not log or copy credentials. Show affects only replacement text currently typed by the user. Provider calls, hard-stop enforcement, attachment safeguards, and retry decisions remain in C++ and backend services.
 
 Appearance changes update the interface without replacing active session state. The two color themes have intentional light and dark palettes. Font preferences use installed system font stacks and require no downloaded assets.
 
@@ -60,14 +62,14 @@ Appearance changes update the interface without replacing active session state. 
 - Android Back closes a nested Settings subsection before leaving Settings. Dialogs provide explicit close or save controls.
 - Android top and bottom surfaces extend to the physical edges while their controls use Qt safe-area margins for status bars, cutouts, gesture navigation, and navigation bars.
 
-The layout targets are 360 by 800, 412 by 915, 800 by 1280, and 1280 by 800. Desktop visual inspection covered a phone-sized 423 by 891 window and a wide 1707 by 960 window. The remaining exact target sizes are covered by responsive layout rules and require device or emulator confirmation.
+The layout targets are 360 by 800, 412 by 915, 800 by 1280, and 1280 by 800. Pixel 10 Pro emulator testing confirmed portrait, landscape, gesture navigation, safe areas, light and dark appearances, long text, model refresh, named seat colors, attachment import, and readable provider responses. The Add Seat dialog is explicitly positioned in the full-window overlay and centered inside the current safe-area viewport, with internal scrolling when height is constrained.
 
 ## Validation and known limitations
 
 Desktop Qt compilation, QML linting, controller tests, QML tests, and the full native test set are part of Phase 3 validation. On Windows, the QML test uses the native platform plugin because the offscreen plugin does not emit the required `windowShown` signal in this environment.
 
-The Android arm64 debug build configures and packages with the repository's existing Qt, SDK, NDK, Gradle, and CMake process. The post-test correction build completed successfully with Qt 6.11.1 and target API 36. No emulator, AVD, or connected device was enumerated during this continuation, so Pixel 10 Pro safe-area behavior, the Android attachment chooser, hardware Back behavior, orientation changes, and on-screen keyboard behavior still require device smoke testing before release.
+The Android arm64 debug build configures and packages with the repository's existing Qt, SDK, NDK, Gradle, and CMake process. The post-test correction build completed successfully with Qt 6.11.1 and target API 36. Pixel 10 Pro emulator testing subsequently confirmed the safe-area behavior, orientation changes, gesture navigation, clean-data startup, long composer input, model refresh, named seat colors, and visible provider response extraction.
 
 Model catalog refresh status is provider-specific and moves through not refreshed, refreshing, updated, or refresh failed text. A failed refresh keeps the previously loaded or built-in catalog and does not expose credential data. The status is session-only because dynamic model catalogs are not persisted across launches.
 
-Fixture tests do not replace a real provider smoke test. Before release, perform one explicitly approved, low-cost request against each configured provider to confirm current production response envelopes, model identity, usage reporting, and cost presentation. Release signing, tagging, and publication are outside this phase.
+The user completed a provider smoke test after the fixture-based response correction and confirmed readable output from the supported providers without opaque reasoning or transport payloads. Release signing, tagging, and publication remain outside this phase.

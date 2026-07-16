@@ -533,7 +533,6 @@ void ProviderGatewayTests::usageMetadataAndFallback()
     QCOMPARE(reported.usedTokens, 16);
     QCOMPARE(reported.cachedTokens, 3);
     QCOMPARE(reported.reasoningTokens, 2);
-    QVERIFY(!reported.costKnown);
 
     ProviderResponse estimated = ProviderGateway::processForTesting(
         requestFor(AnthropicMode), [](const ProviderTestRequest &) {
@@ -548,7 +547,6 @@ void ProviderGatewayTests::usageMetadataAndFallback()
     QVERIFY(estimated.usageEstimated);
     QVERIFY(!estimated.usageReported);
     QVERIFY(estimated.usedTokens > 0);
-    QVERIFY(estimated.costKnown);
 
     ProviderResponse anthropicReported = ProviderGateway::processForTesting(
         requestFor(AnthropicMode), [](const ProviderTestRequest &) {
@@ -568,7 +566,6 @@ void ProviderGatewayTests::usageMetadataAndFallback()
     QVERIFY(anthropicReported.usageReported);
     QCOMPARE(anthropicReported.cachedTokens, 5);
     QCOMPARE(anthropicReported.usedTokens, 21);
-    QVERIFY(!anthropicReported.costKnown);
 }
 
 QTEST_GUILESS_MAIN(ProviderGatewayTests)

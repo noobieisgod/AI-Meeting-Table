@@ -37,7 +37,7 @@ AI Meeting Table is a native Windows app where multiple AI models work together 
 
 - Use Lead Planner, Lead Executioner, and Lead Quality Control if you want a more structured workflow.
 - Use Add Attachment if you want the meeting to work with files.
-- Use Hard Stops in Settings if you want token, cost, round, or time limits.
+- Use Hard Stops in Settings if you want token, round, loop, or time limits.
 
 ## Why This Is Different From Generic Wrapper Software
 
@@ -66,7 +66,7 @@ The app is designed to coordinate models as a structured team, not just expose s
 - Shared transcript and event log
 - Shared evolving artifact output
 - Attachment support
-- Configurable hard stops for tokens, cost, rounds, and time
+- Configurable hard stops for tokens, rounds, loops, and time
 - Pause, resume, continue, and follow-up meeting flow
 - Local persistence of meetings and UI state
 

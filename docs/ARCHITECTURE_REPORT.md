@@ -23,7 +23,7 @@ The mobile copy removes copied Windows build and installer artifacts. The uncomp
 - Domain model: stores phases, roles, providers, seats, transcript entries, logs, artifacts, budgets, stop policy, and session state.
 - Persistence: SQLite via `QSqlDatabase`, app-private path from `QStandardPaths::AppDataLocation`.
 - Workflow: event-driven phase engine with Research, Planning, Execution, Quality Control, Present, terminal states, arbitration, pause, resume, and continuation.
-- Providers: OpenAI, Gemini, and Anthropic through `QNetworkAccessManager`, JSON requests, multipart uploads, model refresh, token usage, and estimated cost.
+- Providers: OpenAI, Gemini, and Anthropic through `QNetworkAccessManager`, JSON requests, multipart uploads, model refresh, and token usage.
 - Services: credential storage, upload hashing, artifact file creation, budget enforcement, model catalog refresh.
 - UI: QML mobile shell with table drawer, session workspace, touch seat visualization, transcript, artifacts, logs, composer, attachment import, seat editor, and settings dialog.
 

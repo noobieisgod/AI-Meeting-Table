@@ -80,6 +80,12 @@ void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
   state.currentArtifactVersionId = artifact.versionId;
   state.usageEstimateUsed = true;
   state.costEstimateComplete = false;
+  SeatUsageTally usage;
+  usage.seatId = "seat-1";
+  usage.totalTokens = 12;
+  usage.inputTokens = 7;
+  usage.outputTokens = 5;
+  state.seatUsage.append(usage);
   QVERIFY(manager.saveTable(state));
 
   const QString auditConnectionName = QUuid::createUuid().toString();
@@ -136,6 +142,8 @@ void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
   QCOMPARE(restored.first().artifacts.first().versionId, QString("artifact-1"));
   QVERIFY(restored.first().usageEstimateUsed);
   QVERIFY(!restored.first().costEstimateComplete);
+  QCOMPARE(restored.first().seatUsage.first().inputTokens, 7);
+  QCOMPARE(restored.first().seatUsage.first().outputTokens, 5);
 }
 
 void DatabaseTests::legacyTranscriptSchemaMigrates() {
