@@ -22,10 +22,7 @@ class SessionRunner final : public QObject
 
 public:
     struct ContinuationAllowance {
-        int maxTotalTokens = -1;
-        int maxSessionSeconds = -1;
-        int maxPhaseSeconds = -1;
-        bool ignoreSafetyReserve = false;
+        BudgetLimitKind kind = BudgetLimitKind::None;
     };
 
     using SessionResolver = std::function<std::shared_ptr<SessionState>(const QString &)>;
@@ -70,7 +67,8 @@ private:
                                  const SeatConfig &seat,
                                  const QJsonObject &prompt,
                                  const QString &blockedSummary,
-                                 const WorkflowCommand *resumeCommand = nullptr);
+                                 const WorkflowCommand *resumeCommand = nullptr,
+                                 bool enforceBudget = true);
     void queueNextCommand(SessionState &state, const WorkflowCommand &command);
     QString latestUserPrompt(const SessionState &state) const;
     int reservedTokensInFlight(const QString &sessionId) const;

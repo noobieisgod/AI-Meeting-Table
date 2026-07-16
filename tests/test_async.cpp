@@ -78,6 +78,11 @@ private slots:
   void presentProceedAliasCompletesOnce();
   void outcomeUnknownDoesNotRecordConfirmedUsage();
   void malformedOutputPausesAndPreservesSession();
+  void supportedHardStopsPauseBeforeDispatch_data();
+  void supportedHardStopsPauseBeforeDispatch();
+  void hardStopBeforeDispatchResumesOnce();
+  void postResponseOvershootPausesNextOperation();
+  void restoredContinuationResumesWithoutReplay();
   void convergencePromptsPreserveArtifactAuthority();
   void convergenceFixtureCompletesAfterOneTargetedRevision();
 };
@@ -419,6 +424,269 @@ void AsyncTests::malformedOutputPausesAndPreservesSession() {
   QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Planning));
 }
 
+void AsyncTests::supportedHardStopsPauseBeforeDispatch_data() {
+  QTest::addColumn<int>("limitKind");
+  QTest::newRow("phase tokens")
+      << static_cast<int>(BudgetLimitKind::MaxPhaseTokens);
+  QTest::newRow("total tokens")
+      << static_cast<int>(BudgetLimitKind::MaxTotalTokens);
+  QTest::newRow("rounds")
+      << static_cast<int>(BudgetLimitKind::MaxRoundsPerPhase);
+  QTest::newRow("execution quality loops")
+      << static_cast<int>(BudgetLimitKind::MaxExecQcLoops);
+  QTest::newRow("phase duration")
+      << static_cast<int>(BudgetLimitKind::MaxPhaseSeconds);
+  QTest::newRow("session duration")
+      << static_cast<int>(BudgetLimitKind::MaxSessionSeconds);
+}
+
+void AsyncTests::supportedHardStopsPauseBeforeDispatch() {
+  QFETCH(int, limitKind);
+  const auto kind = static_cast<BudgetLimitKind>(limitKind);
+  auto state = makeSession(Phase::Planning);
+  switch (kind) {
+  case BudgetLimitKind::MaxPhaseTokens:
+    state->phaseUsedTokens = state->budgetPolicy.maxTokensPerPhase;
+    break;
+  case BudgetLimitKind::MaxTotalTokens:
+    state->usedTokens = state->budgetPolicy.maxTotalTokens;
+    break;
+  case BudgetLimitKind::MaxRoundsPerPhase:
+    state->round = state->budgetPolicy.maxRounds + 1;
+    break;
+  case BudgetLimitKind::MaxExecQcLoops:
+    state->execQcLoopCount = state->budgetPolicy.maxExecQcLoops + 1;
+    break;
+  case BudgetLimitKind::MaxPhaseSeconds:
+    state->phaseElapsedSeconds = state->budgetPolicy.maxPhaseSeconds;
+    break;
+  case BudgetLimitKind::MaxSessionSeconds:
+    state->elapsedSeconds = state->budgetPolicy.maxSessionSeconds;
+    break;
+  case BudgetLimitKind::None:
+  case BudgetLimitKind::MaxTotalCost:
+  case BudgetLimitKind::SafetyReserve:
+    QFAIL("The test row does not represent a supported workflow hard stop.");
+  }
+
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  WorkflowCommand turn;
+  turn.commandType = RunnerCommandType::RequestSeatTurn;
+  turn.sessionId = state->tableId;
+  turn.targetPhase = Phase::Planning;
+  turn.targetSeatId = "seat-participant";
+  runner.executeCommand(*state, turn);
+
+  QCOMPARE(gateway.requests.size(), 0);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
+  QCOMPARE(state->continuationLimitKind, limitKind);
+  QCOMPARE(state->continuationCommand.targetSeatId,
+           QString("seat-participant"));
+  QVERIFY(std::none_of(state->transcript.cbegin(), state->transcript.cend(),
+                       [](const TranscriptEntry &entry) {
+                         return entry.content.contains("Skipped turn");
+                       }));
+
+  const int usedTokens = state->usedTokens;
+  runner.grantContinuation(*state, kind);
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 1);
+  QCOMPARE(gateway.requests.first().seatId, QString("seat-participant"));
+  QCOMPARE(state->usedTokens, usedTokens);
+}
+
+void AsyncTests::hardStopBeforeDispatchResumesOnce() {
+  auto state = makeSession(Phase::Planning);
+  state->budgetPolicy.maxTokensPerPhase = 1000;
+  state->budgetPolicy.maxTotalTokens = 100;
+  state->usedTokens = 100;
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  WorkflowCommand turn;
+  turn.commandType = RunnerCommandType::RequestSeatTurn;
+  turn.sessionId = state->tableId;
+  turn.targetPhase = Phase::Planning;
+  turn.targetSeatId = "seat-participant";
+  runner.executeCommand(*state, turn);
+
+  QCOMPARE(gateway.requests.size(), 0);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
+  QVERIFY(state->paused);
+  QVERIFY(state->continuationPending);
+  QCOMPARE(state->continuationLimitKind,
+           static_cast<int>(BudgetLimitKind::MaxTotalTokens));
+  QVERIFY(state->continuationReason.contains("total token limit"));
+  QCOMPARE(static_cast<int>(state->pausedResumePhase),
+           static_cast<int>(Phase::Planning));
+  QCOMPARE(state->activeSeatId, QString("seat-participant"));
+  QCOMPARE(static_cast<int>(state->continuationCommand.commandType),
+           static_cast<int>(RunnerCommandType::RequestSeatTurn));
+  QCOMPARE(state->continuationCommand.targetSeatId,
+           QString("seat-participant"));
+  QVERIFY(std::none_of(state->transcript.cbegin(), state->transcript.cend(),
+                       [](const TranscriptEntry &entry) {
+                         return entry.content.contains("Skipped turn");
+                       }));
+
+  const int tokensBeforeContinue = state->usedTokens;
+  runner.grantContinuation(*state, BudgetLimitKind::MaxTotalTokens);
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 1);
+  QCOMPARE(gateway.requests.first().seatId, QString("seat-participant"));
+  QCOMPARE(state->usedTokens, tokensBeforeContinue);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Planning));
+
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 1);
+  runner.stopSession(*state, "Stopped by test");
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Stopped));
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 1);
+}
+
+void AsyncTests::postResponseOvershootPausesNextOperation() {
+  auto state = makeSession(Phase::Planning);
+  SeatConfig second = state->seats.first();
+  second.seatId = "seat-second";
+  second.displayName = "Second participant";
+  state->seats.insert(1, second);
+  state->budgetPolicy.maxTokensPerPhase = 5000;
+  state->budgetPolicy.maxTotalTokens = 2000;
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  WorkflowCommand turn;
+  turn.commandType = RunnerCommandType::RequestSeatTurn;
+  turn.sessionId = state->tableId;
+  turn.targetPhase = Phase::Planning;
+  turn.targetSeatId = "seat-participant";
+  runner.executeCommand(*state, turn);
+  QCOMPARE(gateway.requests.size(), 1);
+
+  ProviderResponse first =
+      responseFor(gateway.requests.first(), {}, "Completed first response");
+  first.inputTokens = 2000;
+  first.outputTokens = 500;
+  first.usedTokens = 2500;
+  gateway.responseReady(first);
+
+  QCOMPARE(state->transcript.size(), 1);
+  QCOMPARE(state->transcript.first().content,
+           QString("Completed first response"));
+  QCOMPARE(state->usedTokens, 2500);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
+  QCOMPARE(state->activeSeatId, QString("seat-participant"));
+  QCOMPARE(static_cast<int>(state->continuationCommand.commandType),
+           static_cast<int>(RunnerCommandType::HandleWorkflowEvent));
+  QCOMPARE(gateway.requests.size(), 1);
+  QVERIFY(std::none_of(state->transcript.cbegin(), state->transcript.cend(),
+                       [](const TranscriptEntry &entry) {
+                         return entry.content.contains("Skipped turn");
+                       }));
+
+  runner.grantContinuation(*state, BudgetLimitKind::MaxTotalTokens);
+  runner.resumeSession(*state);
+  QCOMPARE(state->activeSeatId, QString("seat-second"));
+  QCOMPARE(gateway.requests.size(), 1);
+
+  // Consume the normal inter-turn delay without waiting five seconds.
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 2);
+  QCOMPARE(gateway.requests.first().seatId, QString("seat-participant"));
+  QCOMPARE(gateway.requests.last().seatId, QString("seat-second"));
+  QCOMPARE(state->transcript.size(), 1);
+  QCOMPARE(state->usedTokens, 2500);
+
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 2);
+
+  ProviderResponse secondResponse =
+      responseFor(gateway.requests.last(), {}, "Completed second response");
+  secondResponse.inputTokens = 75;
+  secondResponse.outputTokens = 25;
+  secondResponse.usedTokens = 100;
+  gateway.responseReady(secondResponse);
+
+  QCOMPARE(state->transcript.size(), 2);
+  QCOMPARE(state->usedTokens, 2600);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Paused));
+  QVERIFY(state->continuationPending);
+  QCOMPARE(state->activeSeatId, QString("seat-second"));
+}
+
+void AsyncTests::restoredContinuationResumesWithoutReplay() {
+  auto state = makeSession(Phase::Paused);
+  state->pausedResumePhase = Phase::Planning;
+  state->paused = true;
+  state->continuationPending = true;
+  state->continuationLimitKind =
+      static_cast<int>(BudgetLimitKind::MaxTotalTokens);
+  state->continuationReason = "The maximum total token limit has been reached.";
+  state->budgetPolicy.maxTokensPerPhase = 1000;
+  state->budgetPolicy.maxTotalTokens = 100;
+  state->usedTokens = 100;
+  state->activeSeatId = "seat-participant";
+  state->continuationCommand.commandType =
+      RunnerCommandType::RequestSeatTurn;
+  state->continuationCommand.sessionId = state->tableId;
+  state->continuationCommand.targetPhase = Phase::Planning;
+  state->continuationCommand.targetSeatId = "seat-participant";
+
+  EventBus eventBus;
+  WorkflowEngine workflow;
+  FakeProviderGateway gateway;
+  BudgetManager budget;
+  ArtifactManager artifacts;
+  SessionRunner runner(&eventBus, &workflow, &gateway, &budget, &artifacts,
+                       [state](const QString &tableId) {
+                         return tableId == state->tableId
+                                    ? state
+                                    : std::shared_ptr<SessionState>{};
+                       });
+
+  runner.grantContinuation(*state, BudgetLimitKind::MaxTotalTokens);
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 1);
+  QCOMPARE(gateway.requests.first().seatId, QString("seat-participant"));
+  QCOMPARE(state->usedTokens, 100);
+  QCOMPARE(static_cast<int>(state->phase), static_cast<int>(Phase::Planning));
+  QCOMPARE(static_cast<int>(state->continuationCommand.commandType),
+           static_cast<int>(RunnerCommandType::None));
+
+  runner.resumeSession(*state);
+  QCOMPARE(gateway.requests.size(), 1);
+}
+
 void AsyncTests::convergencePromptsPreserveArtifactAuthority() {
   auto state = makeSession(Phase::Execution);
   SeatConfig leadExecution = state->seats.first();
@@ -547,6 +815,7 @@ void AsyncTests::convergenceFixtureCompletesAfterOneTargetedRevision() {
   answerPending("Use simple verbs and avoid guarantees.");
   answerPending("Keep the result under 90 words.");
   answerPending("Check every requested count together.");
+  QCOMPARE(gateway.requests.last().seatId, QString("seat-quality"));
   QVERIFY(state->artifacts.isEmpty());
 
   const QString draft =
@@ -554,6 +823,10 @@ void AsyncTests::convergenceFixtureCompletesAfterOneTargetedRevision() {
       "# Risks\n1. A needed item may be unavailable.\n2. A label may detach.\n"
       "# Acceptance checks\n1. Confirm the bag is labeled.";
   answerPending(draft);
+  QCOMPARE(gateway.requests.last().seatId, QString("seat-execution"));
+  QCOMPARE(static_cast<int>(gateway.requests.last().phase),
+           static_cast<int>(Phase::Execution));
+  QCOMPARE(state->transcript.last().content, draft);
   QCOMPARE(state->artifacts.size(), 1);
   const QString firstVersionId = state->currentArtifactVersionId;
 

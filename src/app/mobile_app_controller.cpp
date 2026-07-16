@@ -527,6 +527,10 @@ bool MobileAppController::duplicateCurrentTable()
     copy.paused = false;
     copy.pauseRequested = false;
     copy.continuationPending = false;
+    copy.continuationLimitKind = 0;
+    copy.continuationReason.clear();
+    copy.continuationCommand = {};
+    copy.pausedResumePhase = Phase::Idle;
     if (!m_context.save(copy)) {
         setError("The table copy could not be saved.");
         return false;

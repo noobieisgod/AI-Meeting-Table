@@ -105,6 +105,20 @@ QString seatTurnInstruction(Phase phase, Role role)
     }
 }
 
+WorkflowCommand deferredEventCommand(const SessionState &state,
+                                     EventType eventType,
+                                     const QJsonObject &eventPayload)
+{
+    WorkflowCommand command;
+    command.commandType = RunnerCommandType::HandleWorkflowEvent;
+    command.sessionId = state.tableId;
+    command.targetPhase = state.phase;
+    command.targetSeatId = state.activeSeatId;
+    command.payload.insert("eventType", static_cast<int>(eventType));
+    command.payload.insert("eventPayload", eventPayload);
+    return command;
+}
+
 }
 
 SessionRunner::SessionRunner(EventBus *eventBus,
@@ -143,6 +157,7 @@ void SessionRunner::startSession(SessionState &state)
     state.continuationPending = false;
     state.continuationLimitKind = 0;
     state.continuationReason.clear();
+    state.continuationCommand = {};
     state.waitingForNextTurn = false;
     state.arbitrationSatisfied = false;
     removePendingRequests(state.tableId);
@@ -157,25 +172,7 @@ void SessionRunner::startSession(SessionState &state)
 
 void SessionRunner::grantContinuation(SessionState &state, BudgetLimitKind kind)
 {
-    ContinuationAllowance allowance = m_continuationAllowances.value(state.tableId);
-    switch (kind) {
-    case BudgetLimitKind::MaxTotalCost:
-        break;
-    case BudgetLimitKind::MaxTotalTokens:
-    case BudgetLimitKind::SafetyReserve:
-        allowance.maxTotalTokens = state.usedTokens + (m_budgetManager->tokenReserve(state) * 4);
-        allowance.ignoreSafetyReserve = true;
-        break;
-    case BudgetLimitKind::MaxSessionSeconds:
-        allowance.maxSessionSeconds = state.elapsedSeconds + 300;
-        break;
-    case BudgetLimitKind::MaxPhaseSeconds:
-        allowance.maxPhaseSeconds = state.phaseElapsedSeconds + 120;
-        break;
-    default:
-        break;
-    }
-    m_continuationAllowances.insert(state.tableId, allowance);
+    m_continuationAllowances.insert(state.tableId, ContinuationAllowance{kind});
     clearContinuationState(state);
 }
 
@@ -223,8 +220,14 @@ void SessionRunner::requestPause(SessionState &state)
 
 void SessionRunner::resumeSession(SessionState &state)
 {
-    const bool hasDelayedCommand = m_delayedCommands.contains(state.tableId);
-    const WorkflowCommand delayedCommand = hasDelayedCommand ? m_delayedCommands.value(state.tableId) : WorkflowCommand{};
+    if (state.phase == Phase::Stopped || state.phase == Phase::Completed || state.phase == Phase::Failed) {
+        return;
+    }
+    const bool hasDelayedCommand = m_delayedCommands.contains(state.tableId)
+        || state.continuationCommand.commandType != RunnerCommandType::None;
+    const WorkflowCommand delayedCommand = m_delayedCommands.contains(state.tableId)
+        ? m_delayedCommands.value(state.tableId)
+        : state.continuationCommand;
     const bool restorePhaseBeforeResume = !(hasDelayedCommand && delayedCommand.commandType == RunnerCommandType::StartPhase);
     state.paused = false;
     state.pauseRequested = false;
@@ -238,7 +241,11 @@ void SessionRunner::resumeSession(SessionState &state)
             timer->stop();
             timer->deleteLater();
         }
-        const WorkflowCommand command = m_delayedCommands.take(state.tableId);
+        const WorkflowCommand command = m_delayedCommands.contains(state.tableId)
+            ? m_delayedCommands.take(state.tableId)
+            : state.continuationCommand;
+        state.continuationCommand = {};
+        m_lastPersistedElapsedSeconds.insert(state.tableId, state.elapsedSeconds);
         executeCommand(state, command);
         updateElapsedTimerState();
         return;
@@ -266,6 +273,7 @@ void SessionRunner::stopSession(SessionState &state, const QString &reason)
     if (!reason.isEmpty()) {
         command.payload.insert("reason", reason);
     }
+    state.phase = Phase::Stopped;
     executeCommand(state, command);
     updateElapsedTimerState();
 }
@@ -295,11 +303,9 @@ void SessionRunner::handleElapsedTick()
             it.value() = state.elapsedSeconds;
             emit sessionStateChanged(state);
             if (!budgetStatus.reason.isEmpty()) {
-                if (budgetStatus.action == BudgetLimitAction::EndPhase) {
-                    appendLog(state, LogEventType::PhaseEnded, {}, {}, budgetStatus.reason);
-                    emitAndHandle(state, makeEvent(state, EventType::PhaseEnded, {{"reason", budgetStatus.reason}}));
-                } else {
-                    markContinuationPending(state, budgetStatus);
+                markContinuationPending(state, budgetStatus);
+                if (m_delayedCommands.contains(state.tableId)) {
+                    enterContinuationPause(state, m_delayedCommands.value(state.tableId));
                 }
             }
         }
@@ -390,6 +396,14 @@ void SessionRunner::executeCommand(SessionState &state, const WorkflowCommand &c
             emitAndHandle(state, makeEvent(state, EventType::SessionStopped, {{"reason", QString("No eligible seats are available for the %1 phase.").arg(toString(state.phase))}}));
             return;
         }
+        const BudgetStatus budgetStatus = budgetStatusFor(
+            state, m_budgetManager->tokenReserve(state) * seats.size());
+        if (!budgetStatus.reason.isEmpty()) {
+            markContinuationPending(state, budgetStatus);
+            enterContinuationPause(state, command);
+            break;
+        }
+        m_continuationAllowances.remove(state.tableId);
         state.pendingResearchResponses = 0;
         state.activeSeatId.clear();
         int dispatchedResearchRequests = 0;
@@ -406,8 +420,10 @@ void SessionRunner::executeCommand(SessionState &state, const WorkflowCommand &c
                                         {{"role", toString(seat.role)},
                                          {"title", state.title},
                                          {"phase", toString(state.phase)},
-                                         {"instruction", seatTurnInstruction(state.phase, seat.role)}},
-                                        QString("%1 was blocked before starting research.").arg(seat.displayName))) {
+                                          {"instruction", seatTurnInstruction(state.phase, seat.role)}},
+                                        QString("%1 was blocked before starting research.").arg(seat.displayName),
+                                        nullptr,
+                                        false)) {
                 state.pendingResearchResponses += 1;
                 dispatchedResearchRequests += 1;
             }
@@ -472,6 +488,23 @@ void SessionRunner::executeCommand(SessionState &state, const WorkflowCommand &c
                                 &command);
         break;
     }
+    case RunnerCommandType::HandleWorkflowEvent: {
+        const int eventType = command.payload.value("eventType").toInt(-1);
+        if (eventType < static_cast<int>(EventType::SessionStarted)
+            || eventType > static_cast<int>(EventType::SessionStopped)) {
+            appendLog(state, LogEventType::ProviderCallFailed, {}, {},
+                      "The paused workflow operation could not be restored.");
+            state.phase = Phase::Failed;
+            emit sessionStateChanged(state);
+            break;
+        }
+        emitAndHandle(
+            state,
+            makeEvent(state,
+                      static_cast<EventType>(eventType),
+                      command.payload.value("eventPayload").toObject()));
+        break;
+    }
     case RunnerCommandType::StopSession:
     case RunnerCommandType::None:
         if (command.commandType == RunnerCommandType::StopSession) {
@@ -482,6 +515,7 @@ void SessionRunner::executeCommand(SessionState &state, const WorkflowCommand &c
             state.pauseRequested = false;
             state.paused = false;
             state.pausedResumePhase = Phase::Idle;
+            state.continuationCommand = {};
             clearContinuationState(state);
             m_continuationAllowances.remove(state.tableId);
             removePendingRequests(state.tableId);
@@ -648,43 +682,42 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
         appendTranscript(session, seat.seatId, seat.displayName,
                          QString("%1\n\n%2").arg(arbitrationTranscriptLabel(session.phase, outcome), response.content), true);
         appendLog(session, LogEventType::FinalDecisionMade, seat.seatId, seat.displayName, QString("%1 issued early arbitration: %2").arg(seat.displayName, outcome));
-        emitAndHandle(session, makeEvent(session, EventType::DecisionIssued, {{"outcome", outcome}, {"mode", "arbitration"}}));
+        const QJsonObject eventPayload{{"outcome", outcome}, {"mode", "arbitration"}};
+        if (!budgetStatus.reason.isEmpty()) {
+            markContinuationPending(session, budgetStatus);
+            enterContinuationPause(
+                session,
+                deferredEventCommand(session, EventType::DecisionIssued,
+                                     eventPayload));
+            return;
+        }
+        emitAndHandle(session, makeEvent(session, EventType::DecisionIssued, eventPayload));
         return;
     }
 
     if (session.phase != Phase::Present && (response.skipped || amt::response::isSkipResponse(response.content))) {
         const QString reason = amt::response::skipReason(response.content);
-        appendTranscript(session, seat.seatId, seat.displayName, QString("Skipped turn.\n%1").arg(reason));
-        appendLog(session, LogEventType::AISkipped, seat.seatId, seat.displayName, QString("%1 skipped: %2").arg(seat.displayName, reason));
-        if (!budgetStatus.reason.isEmpty()) {
-            if (session.phase == Phase::Research && session.pendingResearchResponses > 0) {
-                session.pendingResearchResponses -= 1;
-            if (budgetStatus.action == BudgetLimitAction::EndPhase) {
-                if (session.pendingResearchResponses == 0) {
-                    emitAndHandle(session, makeEvent(session, EventType::PhaseEnded, {{"reason", budgetStatus.reason}}));
-                } else {
-                    emit sessionStateChanged(session);
-                }
-                return;
-            }
+        if (budgetStatus.reason.isEmpty()) {
+            appendTranscript(session, seat.seatId, seat.displayName,
+                             QString("Skipped turn.\n%1").arg(reason));
+            appendLog(session, LogEventType::AISkipped, seat.seatId,
+                      seat.displayName,
+                      QString("%1 skipped: %2").arg(seat.displayName, reason));
+        } else {
             markContinuationPending(session, budgetStatus);
-            finalizeResearchBatchIfReady(session);
-            emit sessionStateChanged(session);
-            return;
         }
-        if (budgetStatus.action == BudgetLimitAction::EndPhase) {
-            emitAndHandle(session, makeEvent(session, EventType::PhaseEnded, {{"reason", budgetStatus.reason}}));
-            return;
-        }
-        session.waitingForNextTurn = true;
-        markContinuationPending(session, budgetStatus);
-        emitAndHandle(session, makeEvent(session, EventType::TurnSkipped, {{"seatId", seat.seatId}, {"reason", reason}}));
-        return;
-    }
         if (session.phase == Phase::Research && session.pendingResearchResponses > 0) {
             session.pendingResearchResponses -= 1;
             finalizeResearchBatchIfReady(session);
             emit sessionStateChanged(session);
+            return;
+        }
+        if (!budgetStatus.reason.isEmpty()) {
+            enterContinuationPause(
+                session,
+                deferredEventCommand(session, EventType::TurnSkipped,
+                                     {{"seatId", seat.seatId},
+                                      {"reason", reason}}));
             return;
         }
         session.waitingForNextTurn = true;
@@ -707,7 +740,16 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
         appendTranscript(session, seat.seatId, seat.displayName,
                          QString("%1\n\n%2").arg(finalDecisionTranscriptLabel(outcome), response.content), true);
         appendLog(session, LogEventType::FinalDecisionMade, seat.seatId, seat.displayName, QString("%1 issued %2").arg(seat.displayName, outcome));
-        emitAndHandle(session, makeEvent(session, EventType::DecisionIssued, {{"outcome", outcome}}));
+        const QJsonObject eventPayload{{"outcome", outcome}};
+        if (!budgetStatus.reason.isEmpty()) {
+            markContinuationPending(session, budgetStatus);
+            enterContinuationPause(
+                session,
+                deferredEventCommand(session, EventType::DecisionIssued,
+                                     eventPayload));
+            return;
+        }
+        emitAndHandle(session, makeEvent(session, EventType::DecisionIssued, eventPayload));
         return;
     }
 
@@ -726,36 +768,21 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
     }
 
     if (!budgetStatus.reason.isEmpty()) {
-        if (session.phase == Phase::Research && session.pendingResearchResponses > 0) {
-            session.pendingResearchResponses -= 1;
-            if (budgetStatus.action == BudgetLimitAction::EndPhase) {
-                if (session.pendingResearchResponses == 0) {
-                    emitAndHandle(session, makeEvent(session, EventType::PhaseEnded, {{"reason", budgetStatus.reason}}));
-                } else {
-                    emit sessionStateChanged(session);
-                }
-                return;
-            }
-            markContinuationPending(session, budgetStatus);
-            finalizeResearchBatchIfReady(session);
-            emit sessionStateChanged(session);
-            return;
-        }
-        if (budgetStatus.action == BudgetLimitAction::EndPhase) {
-            appendLog(session, LogEventType::PhaseEnded, {}, {}, budgetStatus.reason);
-            emitAndHandle(session, makeEvent(session, EventType::PhaseEnded, {{"reason", budgetStatus.reason}}));
-            return;
-        }
-        session.waitingForNextTurn = true;
         markContinuationPending(session, budgetStatus);
-        emitAndHandle(session, makeEvent(session, EventType::TurnCompleted, {{"seatId", seat.seatId}}));
-        return;
     }
 
     if (session.phase == Phase::Research && session.pendingResearchResponses > 0) {
         session.pendingResearchResponses -= 1;
         finalizeResearchBatchIfReady(session);
         emit sessionStateChanged(session);
+        return;
+    }
+
+    if (!budgetStatus.reason.isEmpty()) {
+        enterContinuationPause(
+            session,
+            deferredEventCommand(session, EventType::TurnCompleted,
+                                 {{"seatId", seat.seatId}}));
         return;
     }
 
@@ -788,24 +815,24 @@ bool SessionRunner::dispatchProviderRequest(SessionState &state,
                                             const SeatConfig &seat,
                                             const QJsonObject &prompt,
                                             const QString &blockedSummary,
-                                            const WorkflowCommand *resumeCommand)
+                                            const WorkflowCommand *resumeCommand,
+                                            bool enforceBudget)
 {
     const int reservedInFlight = reservedTokensInFlight(state.tableId);
-    const BudgetStatus budgetStatus = budgetStatusFor(state, reservedInFlight);
+    const BudgetStatus budgetStatus = enforceBudget
+        ? budgetStatusFor(state, reservedInFlight)
+        : BudgetStatus{};
     if (!budgetStatus.reason.isEmpty()) {
-        if (budgetStatus.action == BudgetLimitAction::EndPhase) {
-            appendLog(state, LogEventType::PhaseEnded, seat.seatId, seat.displayName, QString("%1 %2").arg(blockedSummary, budgetStatus.reason));
-            emitAndHandle(state, makeEvent(state, EventType::PhaseEnded, {{"reason", budgetStatus.reason}}));
-        } else {
-            appendLog(state, LogEventType::LimitReached, seat.seatId, seat.displayName, QString("%1 %2").arg(blockedSummary, budgetStatus.reason));
-            markContinuationPending(state, budgetStatus);
-            if (resumeCommand) {
-                m_delayedCommands.insert(state.tableId, *resumeCommand);
-            }
-            if (state.phase != Phase::Paused) {
-                enterContinuationPause(state, WorkflowCommand{RunnerCommandType::StartPhase, state.tableId, state.phase, {}, {}});
-            }
-        }
+        appendLog(state, LogEventType::LimitReached, seat.seatId, seat.displayName,
+                  QString("%1 %2").arg(blockedSummary, budgetStatus.reason));
+        markContinuationPending(state, budgetStatus);
+        enterContinuationPause(
+            state,
+            resumeCommand ? *resumeCommand
+                          : WorkflowCommand{RunnerCommandType::StartPhase,
+                                            state.tableId,
+                                            state.phase,
+                                            {}, {}});
         return false;
     }
 
@@ -921,6 +948,7 @@ bool SessionRunner::dispatchProviderRequest(SessionState &state,
     requestContext.reservedTokens = m_budgetManager->tokenReserve(state);
     requestContext.runGeneration = request.runGeneration;
     m_pendingRequests.insert(request.requestId, requestContext);
+    m_continuationAllowances.remove(state.tableId);
     emit sessionStateChanged(state);
     m_providerGateway->sendAsync(request);
     return true;
@@ -928,6 +956,11 @@ bool SessionRunner::dispatchProviderRequest(SessionState &state,
 
 void SessionRunner::queueNextCommand(SessionState &state, const WorkflowCommand &command)
 {
+    if (state.continuationPending
+        && command.commandType != RunnerCommandType::StopSession) {
+        enterContinuationPause(state, command);
+        return;
+    }
     if (command.commandType == RunnerCommandType::RequestSeatTurn
         || command.commandType == RunnerCommandType::RequestDecision) {
         m_delayedCommands.insert(state.tableId, command);
@@ -997,21 +1030,11 @@ int SessionRunner::reservedTokensInFlight(const QString &sessionId) const
 
 BudgetStatus SessionRunner::budgetStatusFor(const SessionState &state, int reservedTokensInFlight) const
 {
-    BudgetPolicy effectiveBudget = state.budgetPolicy;
     const ContinuationAllowance allowance = m_continuationAllowances.value(state.tableId);
-    if (allowance.maxTotalTokens >= 0) {
-        effectiveBudget.maxTotalTokens = qMax(effectiveBudget.maxTotalTokens, allowance.maxTotalTokens);
-    }
-    if (allowance.maxSessionSeconds >= 0) {
-        effectiveBudget.maxSessionSeconds = qMax(effectiveBudget.maxSessionSeconds, allowance.maxSessionSeconds);
-    }
-    if (allowance.maxPhaseSeconds >= 0) {
-        effectiveBudget.maxPhaseSeconds = qMax(effectiveBudget.maxPhaseSeconds, allowance.maxPhaseSeconds);
-    }
-
-    BudgetStatus status = m_budgetManager->status(state, reservedTokensInFlight, &effectiveBudget);
-    if (allowance.ignoreSafetyReserve && status.kind == BudgetLimitKind::SafetyReserve) {
-        status = {};
+    BudgetStatus status = m_budgetManager->status(state, reservedTokensInFlight);
+    if (allowance.kind != BudgetLimitKind::None
+        && status.kind == allowance.kind) {
+        return {};
     }
     return status;
 }
@@ -1085,6 +1108,13 @@ void SessionRunner::finalizeResearchBatchIfReady(SessionState &state)
     }
     m_researchRequestsBySession.remove(state.tableId);
     m_researchFailuresBySession.remove(state.tableId);
+    if (state.continuationPending) {
+        enterContinuationPause(
+            state,
+            deferredEventCommand(state, EventType::TurnCompleted,
+                                 {{"seatId", "research-batch"}}));
+        return;
+    }
     state.waitingForNextTurn = true;
     emitAndHandle(state, makeEvent(state, EventType::TurnCompleted, {{"seatId", "research-batch"}}));
 }
@@ -1102,27 +1132,26 @@ void SessionRunner::markContinuationPending(SessionState &state, const BudgetSta
     state.continuationPending = true;
     state.continuationLimitKind = static_cast<int>(status.kind);
     state.continuationReason = status.reason;
-    appendLog(state, LogEventType::LimitReached, {}, {}, QString("Continuation will be requested after this phase: %1").arg(status.reason));
+    appendLog(state, LogEventType::LimitReached, {}, {},
+              QString("Session limit reached: %1").arg(status.reason));
 }
 
 void SessionRunner::enterContinuationPause(SessionState &state, const WorkflowCommand &resumeCommand)
 {
-    if (!m_delayedCommands.contains(state.tableId)) {
-        m_delayedCommands.insert(state.tableId, resumeCommand);
-    }
+    m_delayedCommands.insert(state.tableId, resumeCommand);
+    state.continuationCommand = resumeCommand;
     if (m_delayTimers.contains(state.tableId) && m_delayTimers.value(state.tableId)) {
         auto timer = m_delayTimers.take(state.tableId);
         timer->stop();
         timer->deleteLater();
     }
-    state.activeSeatId.clear();
-    state.pendingResearchResponses = 0;
     state.paused = true;
     state.pauseRequested = false;
     state.waitingForNextTurn = false;
     state.pausedResumePhase = resumeCommand.targetPhase == Phase::Idle ? state.phase : resumeCommand.targetPhase;
     state.phase = Phase::Paused;
-    appendLog(state, LogEventType::LimitReached, {}, {}, QString("Meeting paused for continuation: %1").arg(state.continuationReason));
+    appendLog(state, LogEventType::LimitReached, {}, {},
+              QString("Session paused: %1").arg(state.continuationReason));
     emit sessionStateChanged(state);
     emit continuationRequested(state.tableId, state.continuationReason, state.continuationLimitKind);
     updateElapsedTimerState();

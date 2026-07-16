@@ -82,8 +82,14 @@ require_contains("${main_qml_source}" "tokenBreakdownKnown === false ? \"Unavail
 
 file(READ "${SOURCE_DIR}/src/services/budget_manager.cpp" budget_source)
 require_absent("${budget_source}" "state.usedCost >=" "monetary execution hard stop")
+require_contains("${budget_source}" "BudgetLimitAction::PromptToContinue, \"The maximum phase token limit" "phase token continuation pause")
 require_absent("${provider_source}" "PricePerInputToken" "provider price table")
 require_absent("${provider_source}" "estimatedCost" "provider monetary estimate")
+
+file(READ "${SOURCE_DIR}/src/core/session_runner.cpp" session_runner_source)
+require_contains("${session_runner_source}" "state.continuationCommand = resumeCommand" "persisted continuation command")
+require_contains("${session_runner_source}" "deferredEventCommand(session, EventType::TurnCompleted" "post-response workflow deferral")
+require_absent("${session_runner_source}" "Continuation will be requested after this phase" "phase advance after a hard stop")
 
 file(READ "${SOURCE_DIR}/src/core/startup_timeline.cpp" startup_timeline_source)
 require_contains("${startup_timeline_source}" "AMT_STARTUP stage=%1 elapsed_ms=%2" "numeric-only startup marker format")

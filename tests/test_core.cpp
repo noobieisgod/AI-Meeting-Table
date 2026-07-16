@@ -206,7 +206,30 @@ void CoreTests::budgetBoundariesAndContinuationOverrides() {
   state.usedTokens = 0;
   state.phaseUsedTokens = state.budgetPolicy.maxTokensPerPhase;
   QCOMPARE(static_cast<int>(manager.status(state).action),
-           static_cast<int>(BudgetLimitAction::EndPhase));
+           static_cast<int>(BudgetLimitAction::PromptToContinue));
+
+  state.phaseUsedTokens = 0;
+  state.round = state.budgetPolicy.maxRounds + 1;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxRoundsPerPhase));
+  QCOMPARE(static_cast<int>(manager.status(state).action),
+           static_cast<int>(BudgetLimitAction::PromptToContinue));
+
+  state.round = 1;
+  state.execQcLoopCount = state.budgetPolicy.maxExecQcLoops + 1;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxExecQcLoops));
+  QCOMPARE(static_cast<int>(manager.status(state).action),
+           static_cast<int>(BudgetLimitAction::PromptToContinue));
+
+  state.execQcLoopCount = 0;
+  state.phaseElapsedSeconds = state.budgetPolicy.maxPhaseSeconds;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxPhaseSeconds));
+  state.phaseElapsedSeconds = 0;
+  state.elapsedSeconds = state.budgetPolicy.maxSessionSeconds;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxSessionSeconds));
 
   SessionState totals;
   manager.applyUsage(totals, "seat-1", 60, 40, 100);
@@ -249,6 +272,11 @@ void CoreTests::phaseLeadsRunLastAndQcConverges() {
   QCOMPARE(activeSeatIdsForPhase(state).last(), QString("execution"));
   state.phase = Phase::QualityControl;
   QCOMPARE(activeSeatIdsForPhase(state).last(), QString("quality"));
+
+  SeatConfig disabled = seat("disabled", Role::None);
+  disabled.enabled = false;
+  state.seats.append(disabled);
+  QVERIFY(!activeSeatIdsForPhase(state).contains("disabled"));
 
   TranscriptEntry participantReview;
   participantReview.entryId = "participant-review";

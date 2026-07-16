@@ -57,10 +57,10 @@ BudgetStatus BudgetManager::status(const SessionState &state,
 {
     const BudgetPolicy &budget = budgetOverride ? *budgetOverride : state.budgetPolicy;
     if (state.round > budget.maxRounds) {
-        return {BudgetLimitKind::MaxRoundsPerPhase, BudgetLimitAction::EndPhase, "The maximum round limit for this phase has been reached."};
+        return {BudgetLimitKind::MaxRoundsPerPhase, BudgetLimitAction::PromptToContinue, "The maximum round limit for this phase has been reached."};
     }
     if (state.execQcLoopCount > budget.maxExecQcLoops) {
-        return {BudgetLimitKind::MaxExecQcLoops, BudgetLimitAction::EndPhase, "The maximum execution/QC loop limit has been reached."};
+        return {BudgetLimitKind::MaxExecQcLoops, BudgetLimitAction::PromptToContinue, "The maximum execution/QC loop limit has been reached."};
     }
     if (state.stopPolicy.stopOnSessionTimeout && state.elapsedSeconds >= budget.maxSessionSeconds) {
         return {BudgetLimitKind::MaxSessionSeconds, BudgetLimitAction::PromptToContinue, "The maximum session time limit has been reached."};
@@ -72,7 +72,7 @@ BudgetStatus BudgetManager::status(const SessionState &state,
         return {BudgetLimitKind::MaxTotalTokens, BudgetLimitAction::PromptToContinue, "The maximum total token limit has been reached."};
     }
     if (state.stopPolicy.stopOnBudgetExceeded && state.phaseUsedTokens >= budget.maxTokensPerPhase) {
-        return {BudgetLimitKind::MaxPhaseTokens, BudgetLimitAction::EndPhase, "The maximum phase token limit has been reached."};
+        return {BudgetLimitKind::MaxPhaseTokens, BudgetLimitAction::PromptToContinue, "The maximum phase token limit has been reached."};
     }
 
     const int reserve = tokenReserveForPolicy(budget);

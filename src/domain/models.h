@@ -16,7 +16,7 @@ enum class Role { None, FinalDecisionMaker, LeadPlanner, LeadExecutioner, LeadQu
 enum class LogEventType { SessionStarted, UserMessageAdded, PhaseStarted, TurnStarted, AISpoke, AISkipped, ProviderCallFailed, RetryScheduled, PhaseEnded, FinalDecisionMade, SessionStopped, LimitReached };
 enum class EventType { SessionStarted, PhaseStarted, TurnStarted, TurnCompleted, TurnSkipped, ProviderCallFailed, RetryScheduled, BudgetExceeded, DecisionIssued, InputQueued, RoundEnded, PhaseEnded, SessionStopped };
 enum class ProviderKind { OpenAI, Gemini, Anthropic };
-enum class RunnerCommandType { None, StartPhase, RunResearchBatch, RequestSeatTurn, RequestDecision, StopSession };
+enum class RunnerCommandType { None, StartPhase, RunResearchBatch, RequestSeatTurn, RequestDecision, HandleWorkflowEvent, StopSession };
 enum class ModelEffort { Auto, Light, Balanced, Deep };
 enum class ThemeMode { System, Light, Dark };
 
@@ -167,6 +167,7 @@ struct SessionState {
     bool continuationPending = false;
     int continuationLimitKind = 0;
     QString continuationReason;
+    WorkflowCommand continuationCommand;
     bool waitingForNextTurn = false;
     bool arbitrationSatisfied = false;
     QVector<SeatConfig> seats;
@@ -195,6 +196,36 @@ inline QString toString(Phase phase)
     case Phase::Failed: return "Failed";
     }
     return "Unknown";
+}
+
+inline QJsonObject workflowCommandToJson(const WorkflowCommand &command)
+{
+    return {
+        {"commandType", static_cast<int>(command.commandType)},
+        {"sessionId", command.sessionId},
+        {"targetPhase", static_cast<int>(command.targetPhase)},
+        {"targetSeatId", command.targetSeatId},
+        {"payload", command.payload}
+    };
+}
+
+inline WorkflowCommand workflowCommandFromJson(const QJsonObject &object)
+{
+    WorkflowCommand command;
+    const int commandType = object.value("commandType").toInt();
+    const int targetPhase = object.value("targetPhase").toInt();
+    if (commandType < static_cast<int>(RunnerCommandType::None)
+        || commandType > static_cast<int>(RunnerCommandType::StopSession)
+        || targetPhase < static_cast<int>(Phase::Idle)
+        || targetPhase > static_cast<int>(Phase::Failed)) {
+        return command;
+    }
+    command.commandType = static_cast<RunnerCommandType>(commandType);
+    command.sessionId = object.value("sessionId").toString();
+    command.targetPhase = static_cast<Phase>(targetPhase);
+    command.targetSeatId = object.value("targetSeatId").toString();
+    command.payload = object.value("payload").toObject();
+    return command;
 }
 
 inline QString toString(Role role)

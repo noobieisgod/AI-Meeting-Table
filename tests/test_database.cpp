@@ -6,6 +6,7 @@
 #include <QUuid>
 
 #include "persistence/database_manager.h"
+#include "services/budget_manager.h"
 
 using namespace amt;
 
@@ -80,6 +81,22 @@ void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
   state.currentArtifactVersionId = artifact.versionId;
   state.usageEstimateUsed = true;
   state.costEstimateComplete = false;
+  state.phase = Phase::Paused;
+  state.pausedResumePhase = Phase::Planning;
+  state.continuationPending = true;
+  state.continuationLimitKind =
+      static_cast<int>(BudgetLimitKind::MaxTotalTokens);
+  state.continuationReason =
+      "The maximum total token limit has been reached.";
+  state.activeSeatId = "seat-1";
+  state.usedTokens = 100;
+  state.execQcLoopCount = 2;
+  state.continuationCommand.commandType =
+      RunnerCommandType::RequestDecision;
+  state.continuationCommand.sessionId = state.tableId;
+  state.continuationCommand.targetPhase = Phase::Planning;
+  state.continuationCommand.targetSeatId = "seat-1";
+  state.continuationCommand.payload.insert("mode", "arbitration");
   SeatUsageTally usage;
   usage.seatId = "seat-1";
   usage.totalTokens = 12;
@@ -144,6 +161,26 @@ void DatabaseTests::incrementalDeltaRoundTripAndIndexes() {
   QVERIFY(!restored.first().costEstimateComplete);
   QCOMPARE(restored.first().seatUsage.first().inputTokens, 7);
   QCOMPARE(restored.first().seatUsage.first().outputTokens, 5);
+  QCOMPARE(static_cast<int>(restored.first().phase),
+           static_cast<int>(Phase::Paused));
+  QCOMPARE(static_cast<int>(restored.first().pausedResumePhase),
+           static_cast<int>(Phase::Planning));
+  QVERIFY(restored.first().continuationPending);
+  QCOMPARE(restored.first().continuationLimitKind,
+           static_cast<int>(BudgetLimitKind::MaxTotalTokens));
+  QCOMPARE(restored.first().continuationReason,
+           QString("The maximum total token limit has been reached."));
+  QCOMPARE(restored.first().activeSeatId, QString("seat-1"));
+  QCOMPARE(restored.first().usedTokens, 100);
+  QCOMPARE(restored.first().execQcLoopCount, 2);
+  QCOMPARE(static_cast<int>(restored.first().continuationCommand.commandType),
+           static_cast<int>(RunnerCommandType::RequestDecision));
+  QCOMPARE(static_cast<int>(restored.first().continuationCommand.targetPhase),
+           static_cast<int>(Phase::Planning));
+  QCOMPARE(restored.first().continuationCommand.targetSeatId,
+           QString("seat-1"));
+  QCOMPARE(restored.first().continuationCommand.payload.value("mode").toString(),
+           QString("arbitration"));
 }
 
 void DatabaseTests::legacyTranscriptSchemaMigrates() {
@@ -197,6 +234,8 @@ void DatabaseTests::legacyTranscriptSchemaMigrates() {
     bool foundEntryType = false;
     bool foundUsageEstimate = false;
     bool foundCostEstimateComplete = false;
+    bool foundContinuationCommand = false;
+    bool foundExecQcLoopCount = false;
     while (query.next()) {
       foundEntryType =
           foundEntryType || query.value(1).toString() == "entry_type";
@@ -208,9 +247,15 @@ void DatabaseTests::legacyTranscriptSchemaMigrates() {
           || query.value(1).toString() == "usage_estimate_used";
       foundCostEstimateComplete = foundCostEstimateComplete
           || query.value(1).toString() == "cost_estimate_complete";
+      foundContinuationCommand = foundContinuationCommand
+          || query.value(1).toString() == "continuation_command_json";
+      foundExecQcLoopCount = foundExecQcLoopCount
+          || query.value(1).toString() == "exec_qc_loop_count";
     }
     QVERIFY(foundUsageEstimate);
     QVERIFY(foundCostEstimateComplete);
+    QVERIFY(foundContinuationCommand);
+    QVERIFY(foundExecQcLoopCount);
     inspect.close();
   }
   QSqlDatabase::removeDatabase(inspectConnectionName);
