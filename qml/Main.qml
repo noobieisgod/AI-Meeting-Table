@@ -228,6 +228,10 @@ ApplicationWindow {
                 return;
             }
         }
+        if (seatRows.length < 8) {
+            openSeatEditor(seatRows.length, true);
+            return;
+        }
         errorDialog.text = "This table already uses all eight seats.";
         errorDialog.open();
     }
@@ -1384,18 +1388,18 @@ ApplicationWindow {
 
     Dialog {
         id: createTableDialog
+        parent: Overlay.overlay
         title: "Create meeting table"
         modal: true
         standardButtons: Dialog.Save | Dialog.Cancel
-        width: Math.min(root.width - 24, 460)
-        x: (root.width - width) / 2
-        onAccepted: { if (!root.appController.createTable(createTitle.text, Number(createSeats.currentText))) root.showErrorIfNeeded(); else root.selectedPage = 1; }
+        width: Math.min(root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - 24, 460)
+        x: Math.round(root.SafeArea.margins.left + (root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - width) / 2)
+        y: Math.round(root.SafeArea.margins.top + (root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - height) / 2)
+        onAccepted: { if (!root.appController.createTable(createTitle.text)) root.showErrorIfNeeded(); else root.selectedPage = 1; }
         ColumnLayout {
             width: parent.width
             Label { text: "Table title"; color: root.textColor }
             TextField { id: createTitle; Layout.fillWidth: true; text: "New Meeting Table"; selectByMouse: true }
-            Label { text: "Initial seats"; color: root.textColor }
-            ComboBox { id: createSeats; Layout.fillWidth: true; model: ["1", "2", "3", "4", "5", "6", "7", "8"]; currentIndex: 3 }
         }
     }
 

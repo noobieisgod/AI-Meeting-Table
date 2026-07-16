@@ -22,6 +22,7 @@ class ControllerTests final : public QObject {
 
 private slots:
   void initTestCase();
+  void newTablesStartEmptyAndPersist();
   void granularSignalsOnlyRefreshChangedCollections();
   void fullTranscriptTextPreservesOrderAndMetadata();
   void budgetValidationRejectsInvalidRelationships();
@@ -46,6 +47,48 @@ void ControllerTests::initTestCase() {
     QVERIFY(testData.removeRecursively());
   }
   QSettings().clear();
+}
+
+void ControllerTests::newTablesStartEmptyAndPersist() {
+  QString emptyTableId;
+  QString existingTableId;
+  {
+    MobileAppController controller;
+    QVERIFY(controller.initialize());
+    existingTableId = controller.currentTableId();
+    const auto existing = controller.m_context.tableHandle(existingTableId);
+    QVERIFY(existing);
+    QVERIFY(existing->seats.isEmpty());
+
+    QVERIFY(controller.saveSeat(0, true, "Existing decision maker", 0, "",
+                                0, 1, "#4f86c6"));
+    QCOMPARE(existing->seats.size(), 1);
+
+    QVERIFY(controller.createTable("Empty persisted table"));
+    emptyTableId = controller.currentTableId();
+    QVERIFY(emptyTableId != existingTableId);
+    const auto empty = controller.m_context.tableHandle(emptyTableId);
+    QVERIFY(empty);
+    QVERIFY(empty->seats.isEmpty());
+    QVERIFY(controller.seats().isEmpty());
+    QCOMPARE(existing->seats.size(), 1);
+  }
+
+  MobileAppController restored;
+  QVERIFY(restored.initialize());
+  QCOMPARE(restored.currentTableId(), emptyTableId);
+  const auto empty = restored.m_context.tableHandle(emptyTableId);
+  const auto existing = restored.m_context.tableHandle(existingTableId);
+  QVERIFY(empty);
+  QVERIFY(existing);
+  QVERIFY(empty->seats.isEmpty());
+  QCOMPARE(existing->seats.size(), 1);
+
+  QVERIFY(restored.saveSeat(0, true, "New decision maker", 0, "", 0, 1,
+                            "#2f9eaa"));
+  QCOMPARE(empty->seats.size(), 1);
+  QCOMPARE(restored.seats().size(), 1);
+  QCOMPARE(existing->seats.size(), 1);
 }
 
 void ControllerTests::granularSignalsOnlyRefreshChangedCollections() {
@@ -86,7 +129,7 @@ void ControllerTests::granularSignalsOnlyRefreshChangedCollections() {
 void ControllerTests::fullTranscriptTextPreservesOrderAndMetadata() {
   MobileAppController controller;
   QVERIFY(controller.initialize());
-  QVERIFY(controller.createTable("Transcript copy", 1));
+  QVERIFY(controller.createTable("Transcript copy"));
   QCOMPARE(controller.fullTranscriptText(), QString{});
   QVERIFY(controller.sendMessage("First copied message"));
   QVERIFY(controller.sendMessage("Second copied message"));
@@ -179,7 +222,7 @@ void ControllerTests::appearanceAndSeatColorAreExposed() {
 void ControllerTests::missingAttachmentCannotBeOpened() {
   MobileAppController controller;
   QVERIFY(controller.initialize());
-  QVERIFY(controller.createTable("Missing attachment", 1));
+  QVERIFY(controller.createTable("Missing attachment"));
   const auto handle = controller.m_context.tableHandle(controller.currentTableId());
   QVERIFY(handle);
 
@@ -247,7 +290,7 @@ void ControllerTests::attachmentCleanupIsReferenceAndPathSafe() {
 void ControllerTests::attachmentMetadataAddedOnlyAfterSuccess() {
   MobileAppController controller;
   QVERIFY(controller.initialize());
-  QVERIFY(controller.createTable("Async attachment", 1));
+  QVERIFY(controller.createTable("Async attachment"));
   const QString tableId = controller.currentTableId();
   const auto handle = controller.m_context.tableHandle(tableId);
   QVERIFY(handle);
@@ -289,7 +332,7 @@ void ControllerTests::attachmentMetadataAddedOnlyAfterSuccess() {
 void ControllerTests::tableDeletionDuringImportRemovesCompletedResult() {
   MobileAppController controller;
   QVERIFY(controller.initialize());
-  QVERIFY(controller.createTable("Delete during import", 1));
+  QVERIFY(controller.createTable("Delete during import"));
   const QString tableId = controller.currentTableId();
   const QString attachmentRoot =
       QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
@@ -323,7 +366,7 @@ void ControllerTests::staleAttachmentCompletionIsIgnored() {
   MobileAppController controller;
   QVERIFY(controller.initialize());
   if (controller.currentTableId().isEmpty()) {
-    QVERIFY(controller.createTable("Stale import", 1));
+    QVERIFY(controller.createTable("Stale import"));
   }
   const auto handle = controller.m_context.tableHandle(controller.currentTableId());
   QVERIFY(handle);

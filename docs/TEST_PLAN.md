@@ -31,7 +31,7 @@ The suite covers domain serialization and role validation, workflow and arbitrat
 
 ## Functional Testing
 
-- Create tables with 1 to 8 seats.
+- Create an empty table, then add up to 8 seats individually.
 - Search, select, duplicate, rename, pin, unpin, and delete tables.
 - Configure occupied and empty seats.
 - Validate exactly one Final Decision Maker when running.

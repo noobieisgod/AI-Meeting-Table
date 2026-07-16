@@ -262,12 +262,7 @@ QVariantList MobileAppController::seats() const
     if (!state) {
         return rows;
     }
-    QVector<SeatConfig> source = hasPendingSeatChanges(*state) ? state->pendingSeats : state->seats;
-    while (source.size() < 8) {
-        SeatConfig seat;
-        seat.seatId = QString("seat-%1").arg(source.size() + 1);
-        source.append(seat);
-    }
+    const QVector<SeatConfig> source = hasPendingSeatChanges(*state) ? state->pendingSeats : state->seats;
     for (int i = 0; i < source.size(); ++i) {
         rows.append(seatSummary(source.at(i), i));
     }
@@ -469,7 +464,7 @@ void MobileAppController::selectTable(const QString &tableId)
     emit logsChanged();
 }
 
-bool MobileAppController::createTable(const QString &title, int seatCount)
+bool MobileAppController::createTable(const QString &title)
 {
     SessionState state;
     state.tableId = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -478,15 +473,6 @@ bool MobileAppController::createTable(const QString &title, int seatCount)
     state.phase = Phase::Idle;
     state.round = 1;
     state.logVisible = false;
-    const int boundedSeatCount = qBound(1, seatCount, 8);
-    for (int i = 0; i < boundedSeatCount; ++i) {
-        SeatConfig seat;
-        seat.seatId = QString("seat-%1").arg(i + 1);
-        seat.displayName = QString("Seat %1").arg(i + 1);
-        seat.occupied = false;
-        seat.enabled = false;
-        state.seats.append(seat);
-    }
     m_context.applyEffectiveBudgetPolicy(state);
     if (!m_context.save(state)) {
         setError("The table could not be created.");
@@ -610,11 +596,9 @@ bool MobileAppController::saveSeat(int seatIndex,
     }
     SessionState candidate = *state;
     QVector<SeatConfig> targetSeats = hasPendingSeatChanges(candidate) ? candidate.pendingSeats : candidate.seats;
-    while (targetSeats.size() < 8) {
-        SeatConfig seat;
-        seat.seatId = QString("seat-%1").arg(targetSeats.size() + 1);
-        seat.displayName = QString("Seat %1").arg(targetSeats.size() + 1);
-        targetSeats.append(seat);
+    if (seatIndex > targetSeats.size()) {
+        setError("Invalid seat.");
+        return false;
     }
     SeatConfig seat;
     seat.seatId = QString("seat-%1").arg(seatIndex + 1);
@@ -633,7 +617,11 @@ bool MobileAppController::saveSeat(int seatIndex,
         seat.effort = ModelEffort::Auto;
     }
     normalizeSeatModel(seat);
-    targetSeats[seatIndex] = seat;
+    if (seatIndex == targetSeats.size()) {
+        targetSeats.append(seat);
+    } else {
+        targetSeats[seatIndex] = seat;
+    }
     const QString roleError = validateSeatRoleAssignments(targetSeats);
     const bool anyOccupied = std::any_of(targetSeats.cbegin(), targetSeats.cend(), [](const SeatConfig &item) {
         return item.occupied && item.enabled;

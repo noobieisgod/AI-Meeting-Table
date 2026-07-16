@@ -96,14 +96,6 @@ SessionState ApplicationContext::createSampleTable() const
     state.logVisible = true;
     state.budgetOverrides = m_appSettings.globalBudgetDefaults;
     state.budgetPolicy = m_appSettings.globalBudgetDefaults;
-    for (int i = 0; i < 4; ++i) {
-        SeatConfig seat;
-        seat.seatId = QString("seat-%1").arg(i + 1);
-        seat.displayName = QString("Seat %1").arg(i + 1);
-        seat.occupied = false;
-        seat.enabled = false;
-        state.seats.append(seat);
-    }
     state.finalDecisionMakerSeatId.clear();
     return state;
 }

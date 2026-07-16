@@ -58,7 +58,7 @@ public:
     Q_INVOKABLE QString lastError() const;
 
     Q_INVOKABLE void selectTable(const QString &tableId);
-    Q_INVOKABLE bool createTable(const QString &title, int seatCount);
+    Q_INVOKABLE bool createTable(const QString &title);
     Q_INVOKABLE bool duplicateCurrentTable();
     Q_INVOKABLE bool renameCurrentTable(const QString &title);
     Q_INVOKABLE bool deleteCurrentTable();
