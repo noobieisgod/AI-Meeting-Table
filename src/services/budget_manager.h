@@ -39,10 +39,10 @@ public:
 
     void applyUsage(SessionState &state,
                     const QString &seatId,
-                    int tokens,
-                    double cost,
-                    bool usageEstimated = false,
-                    bool costKnown = true) const;
+                    int inputTokens,
+                    int outputTokens,
+                    int totalTokens,
+                    bool usageEstimated = false) const;
     int tokenReserve(const SessionState &state) const;
     BudgetStatus status(const SessionState &state,
                         int reservedTokensInFlight = 0,

@@ -22,7 +22,6 @@ class SessionRunner final : public QObject
 
 public:
     struct ContinuationAllowance {
-        double maxTotalCost = -1.0;
         int maxTotalTokens = -1;
         int maxSessionSeconds = -1;
         int maxPhaseSeconds = -1;

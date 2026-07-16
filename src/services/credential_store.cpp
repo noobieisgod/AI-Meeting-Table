@@ -21,7 +21,19 @@ CredentialStore::CredentialStore(QObject *parent)
 
 bool CredentialStore::saveApiKey(ProviderKind provider, const QString &apiKey, QString *errorMessage, bool allowDelete) const
 {
-#ifdef Q_OS_ANDROID
+#ifdef AMT_TESTING
+    QSettings settings;
+    const QString key = QString("credentials/%1").arg(providerCredentialTarget(provider));
+    if (apiKey.trimmed().isEmpty()) {
+        if (allowDelete) {
+            settings.remove(key);
+        }
+    } else {
+        settings.setValue(key, apiKey);
+    }
+    Q_UNUSED(errorMessage);
+    return true;
+#elif defined(Q_OS_ANDROID)
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
     const QJniObject target = QJniObject::fromString(providerCredentialTarget(provider));
     const QJniObject value = QJniObject::fromString(apiKey);
@@ -91,7 +103,10 @@ bool CredentialStore::saveApiKey(ProviderKind provider, const QString &apiKey, Q
 
 QString CredentialStore::loadApiKey(ProviderKind provider, QString *errorMessage) const
 {
-#ifdef Q_OS_ANDROID
+#ifdef AMT_TESTING
+    Q_UNUSED(errorMessage);
+    return QSettings().value(QString("credentials/%1").arg(providerCredentialTarget(provider))).toString();
+#elif defined(Q_OS_ANDROID)
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
     const QJniObject target = QJniObject::fromString(providerCredentialTarget(provider));
     const QJniObject value = QJniObject::callStaticObjectMethod(

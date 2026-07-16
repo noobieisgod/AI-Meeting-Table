@@ -31,13 +31,13 @@ QString arbitrationInstruction(Phase phase)
         break;
     }
 
-    return QStringLiteral("FDM phase arbitration for %1. Resolve only this phase's dispute and do not approve or reject the final artifact before Present. If no artifact exists, judge only the current phase discussion. %2 %3 STOP ends the meeting only when continuing is not useful. Explain briefly without using any ruling token in the explanation. Use the FINAL_RULING field exactly once, as the final non-empty line, with one value from PROCEED, REVISE, or STOP.")
+    return QStringLiteral("FDM phase arbitration for %1. Resolve only this phase's dispute and do not approve or reject the final artifact before Present. If no artifact exists, judge only the current phase discussion. %2 %3 Return REVISE only for unresolved blocking correctness issues. Consolidate every currently detectable blocking correction in one response and list only those unresolved corrections. Resolved findings stay resolved unless new contradictory evidence is present. Optional wording or style improvements must not trigger another loop. STOP ends the meeting only when continuing is not useful. Explain briefly without using any ruling token in the explanation. Use the FINAL_RULING field exactly once, as the final non-empty line, with one value from PROCEED, REVISE, or STOP.")
         .arg(toString(phase), proceedTransition, reviseTransition);
 }
 
 QString finalDecisionInstruction()
 {
-    return QStringLiteral("Final Present-phase FDM decision: review the transcript, artifact, and unresolved disagreements. APPROVE delivers the current artifact and completes the meeting. REVISE transitions to Execution so specific required changes can be made. STOP ends the meeting when continuing is not useful. Explain briefly without using any ruling token in the explanation. Use the FINAL_RULING field exactly once, as the final non-empty line, with one value from APPROVE, REVISE, or STOP.");
+    return QStringLiteral("Final Present-phase FDM decision: review the current artifact and only unresolved blocking findings. APPROVE delivers the current artifact and completes the meeting. REVISE transitions to Execution and must list only the still-unresolved corrections so Execution can patch the existing draft. Resolved findings must not be reopened without new contradictory evidence, and optional wording or style improvements must not trigger revision. STOP ends the meeting when continuing is not useful. Explain briefly without using any ruling token in the explanation. Use the FINAL_RULING field exactly once, as the final non-empty line, with one value from APPROVE, REVISE, or STOP.");
 }
 
 QString arbitrationTranscriptLabel(Phase phase, const QString &outcome)
@@ -82,19 +82,22 @@ QString seatTurnInstruction(Phase phase, Role role)
 
     switch (phase) {
     case Phase::Research:
-        return "Research turn: work independently. Gather evidence, note uncertainties, and do not create the final result, plan, QC ruling, or final decision. If you have nothing useful to add, start with SKIP on its own line.";
+        return "Research turn: work independently. Add only new evidence, constraints, or uncertainties. Do not repeat settled facts or create the final result, plan, QC ruling, or final decision. Keep this contribution substantially shorter than the final artifact. If you have nothing useful to add, start with SKIP on its own line.";
     case Phase::Planning:
-        return "Planning turn: compare research and improve the plan. Lead Planner owns the plan. Other seats may recommend, challenge, or add evidence, but must not override without a concrete, evidence-backed flaw.";
+        if (role == Role::LeadPlanner) {
+            return "Planning turn: produce the authoritative, consolidated plan from the new research and constraints. Resolve contradictions, avoid restating settled facts, and provide the plan directly.";
+        }
+        return "Planning turn: add only concise new evidence, constraints, or a concrete flaw for the Lead Planner. Do not present an authoritative plan and do not repeat prior contributions. If nothing new is blocking, start with SKIP on its own line.";
     case Phase::Execution:
         if (role == Role::LeadExecutioner) {
-            return "Execution turn: create or revise the official artifact. Follow the plan, resolve contradictions, and provide the artifact content directly.";
+            return "Execution turn: produce the authoritative artifact directly. If a current artifact exists, patch only the unresolved corrections into that draft instead of restarting it. Do not discuss how to assemble the artifact and do not include process commentary. Before submission, silently verify: required headings are present; exact numbered-step, risk, and acceptance-check counts match the user request; the word limit is satisfied; prohibited claims are absent; and no blocking finding remains.";
         }
-        return "Execution turn: support the Lead Executioner with constraints, examples, snippets, risks, or corrections. Do not present your own answer as the official artifact.";
+        return "Execution turn: add only concise new constraints, examples, snippets, risks, or corrections for the Lead Executioner. Do not present an authoritative artifact, repeat settled constraints, add a preamble, or label the response as support notes. If nothing new is blocking, start with SKIP on its own line.";
     case Phase::QualityControl:
         if (role == Role::LeadQualityControl) {
-            return "Quality Control turn: review the artifact against the user request, identify defects, and rule whether revision is required. Do not rewrite the artifact unless explicitly instructed.";
+            return "Quality Control turn: produce one consolidated review against the user request. Use the headings 'Blocking correctness issues:', 'Optional improvements:', 'Open findings:', and 'Resolved findings:'. List every currently detectable blocking correction now. Preserve accepted resolved findings and do not reopen them without new contradictory evidence. Write 'Blocking correctness issues: None' when no blocking issue remains. Optional wording or style improvements must not require revision. Do not rewrite the artifact.";
         }
-        return "Quality Control turn: identify possible issues or evidence for the reviewer. Do not issue the final QC ruling and do not rewrite the artifact unless explicitly instructed.";
+        return "Quality Control turn: add only new, concrete correctness evidence for the Lead Quality Control reviewer. Distinguish blocking correctness issues from optional improvements. Do not reopen a resolved finding without new contradictory evidence, issue the final QC ruling, rewrite the artifact, repeat settled points, or label the response as support notes. If nothing new is blocking, start with SKIP on its own line.";
     case Phase::Present:
         return finalDecisionInstruction();
     default:
@@ -157,7 +160,6 @@ void SessionRunner::grantContinuation(SessionState &state, BudgetLimitKind kind)
     ContinuationAllowance allowance = m_continuationAllowances.value(state.tableId);
     switch (kind) {
     case BudgetLimitKind::MaxTotalCost:
-        allowance.maxTotalCost = state.usedCost + qMax(1.0, state.budgetPolicy.maxTotalCost * 0.25);
         break;
     case BudgetLimitKind::MaxTotalTokens:
     case BudgetLimitKind::SafetyReserve:
@@ -556,8 +558,10 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
             || errorMessage.contains("no user-visible", Qt::CaseInsensitive);
         if (response.deliveryOutcome == ProviderDeliveryOutcome::DefiniteFailure
             && response.usageReported && response.usedTokens > 0) {
-            m_budgetManager->applyUsage(session, seat.seatId, response.usedTokens,
-                                        response.estimatedCost, false, response.costKnown);
+            m_budgetManager->applyUsage(session, seat.seatId,
+                                        response.inputTokens,
+                                        response.outputTokens,
+                                        response.usedTokens);
         }
         appendLog(session, LogEventType::ProviderCallFailed, seat.seatId, seat.displayName, errorMessage);
         if (session.phase == Phase::Research && session.pendingResearchResponses > 0) {
@@ -616,9 +620,11 @@ void SessionRunner::onProviderResponse(const ProviderResponse &response)
                   "Multiple explicit final decision ruling lines were detected; the final valid line was used.");
     }
 
-    m_budgetManager->applyUsage(session, seat.seatId, response.usedTokens,
-                                response.estimatedCost, response.usageEstimated,
-                                response.costKnown);
+    m_budgetManager->applyUsage(session, seat.seatId,
+                                response.inputTokens,
+                                response.outputTokens,
+                                response.usedTokens,
+                                response.usageEstimated);
     const BudgetStatus budgetStatus = budgetStatusFor(session);
 
     if (requestMode == "arbitration") {
@@ -993,9 +999,6 @@ BudgetStatus SessionRunner::budgetStatusFor(const SessionState &state, int reser
 {
     BudgetPolicy effectiveBudget = state.budgetPolicy;
     const ContinuationAllowance allowance = m_continuationAllowances.value(state.tableId);
-    if (allowance.maxTotalCost >= 0.0) {
-        effectiveBudget.maxTotalCost = qMax(effectiveBudget.maxTotalCost, allowance.maxTotalCost);
-    }
     if (allowance.maxTotalTokens >= 0) {
         effectiveBudget.maxTotalTokens = qMax(effectiveBudget.maxTotalTokens, allowance.maxTotalTokens);
     }

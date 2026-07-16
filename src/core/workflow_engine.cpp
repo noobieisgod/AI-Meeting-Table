@@ -1,5 +1,7 @@
 #include "core/workflow_engine.h"
 
+#include <algorithm>
+
 namespace amt {
 
 namespace {
@@ -34,6 +36,33 @@ Phase nextPhase(Phase phase)
 
 bool hasUnresolvedDisagreement(const SessionState &state)
 {
+    if (state.phase == Phase::QualityControl) {
+        for (auto it = state.transcript.crbegin(); it != state.transcript.crend(); ++it) {
+            if (it->phase != state.phase || it->round != state.round || it->isUser) {
+                continue;
+            }
+            const auto seat = std::find_if(state.seats.cbegin(), state.seats.cend(),
+                                           [&](const SeatConfig &candidate) {
+                                               return candidate.seatId == it->speakerSeatId;
+                                           });
+            if (seat == state.seats.cend() || seat->role != Role::LeadQualityControl) {
+                continue;
+            }
+            QString review = it->content.toLower();
+            review.remove('*');
+            review.remove('_');
+            review = review.simplified();
+            if (review.contains("blocking correctness issues: none")
+                || review.contains("no new blocking issue")) {
+                return false;
+            }
+            if (review.contains("blocking correctness issues:")) {
+                return true;
+            }
+            break;
+        }
+    }
+
     QStringList discussionPoints;
     for (const auto &entry : state.transcript) {
         if (entry.phase != state.phase || entry.round != state.round || entry.isUser || entry.isDecision) {

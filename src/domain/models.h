@@ -47,6 +47,8 @@ struct StopPolicy {
 struct SeatUsageTally {
     QString seatId;
     int totalTokens = 0;
+    int inputTokens = 0;
+    int outputTokens = 0;
     double totalCost = 0.0;
     int phaseTokens = 0;
     double phaseCost = 0.0;
@@ -750,10 +752,26 @@ inline bool hasPendingSeatChanges(const SessionState &state)
 inline QStringList activeSeatIdsForPhase(const SessionState &state)
 {
     QStringList ids;
+    Role phaseLead = Role::None;
+    if (state.phase == Phase::Planning) {
+        phaseLead = Role::LeadPlanner;
+    } else if (state.phase == Phase::Execution) {
+        phaseLead = Role::LeadExecutioner;
+    } else if (state.phase == Phase::QualityControl) {
+        phaseLead = Role::LeadQualityControl;
+    }
+    QString leadId;
     for (const auto &seat : state.seats) {
         if (seat.occupied && seat.enabled && seat.role != Role::FinalDecisionMaker) {
-            ids.append(seat.seatId);
+            if (phaseLead != Role::None && seat.role == phaseLead) {
+                leadId = seat.seatId;
+            } else {
+                ids.append(seat.seatId);
+            }
         }
+    }
+    if (!leadId.isEmpty()) {
+        ids.append(leadId);
     }
     return ids;
 }
@@ -868,6 +886,8 @@ inline QJsonObject seatUsageToJson(const SeatUsageTally &usage)
     return {
         {"seatId", usage.seatId},
         {"totalTokens", usage.totalTokens},
+        {"inputTokens", usage.inputTokens},
+        {"outputTokens", usage.outputTokens},
         {"totalCost", usage.totalCost},
         {"phaseTokens", usage.phaseTokens},
         {"phaseCost", usage.phaseCost}
@@ -879,6 +899,8 @@ inline SeatUsageTally seatUsageFromJson(const QJsonObject &object)
     SeatUsageTally usage;
     usage.seatId = object.value("seatId").toString();
     usage.totalTokens = object.value("totalTokens").toInt();
+    usage.inputTokens = object.value("inputTokens").toInt();
+    usage.outputTokens = object.value("outputTokens").toInt();
     usage.totalCost = object.value("totalCost").toDouble();
     usage.phaseTokens = object.value("phaseTokens").toInt();
     usage.phaseCost = object.value("phaseCost").toDouble();

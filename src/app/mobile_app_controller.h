@@ -54,8 +54,7 @@ public:
     Q_INVOKABLE QVariantList modelRefreshStatuses() const;
     Q_INVOKABLE QVariantMap settings() const;
     Q_INVOKABLE QVariantMap attachmentSafeguards() const;
-    Q_INVOKABLE QString apiKey(int providerIndex) const;
-    Q_INVOKABLE QString apiKeyStatus(int providerIndex) const;
+    Q_INVOKABLE bool hasCredential(int providerIndex) const;
     Q_INVOKABLE QString lastError() const;
 
     Q_INVOKABLE void selectTable(const QString &tableId);
@@ -88,7 +87,6 @@ public:
                                     const QString &fontStyle);
     Q_INVOKABLE bool saveGlobalBudget(int maxTokensPerPhase,
                                       int maxTotalTokens,
-                                      double maxTotalCost,
                                       int maxRounds,
                                       int maxExecQcLoops,
                                       int maxPhaseSeconds,

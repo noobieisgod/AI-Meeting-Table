@@ -22,17 +22,14 @@ BudgetManager::BudgetManager(QObject *parent)
 
 void BudgetManager::applyUsage(SessionState &state,
                                const QString &seatId,
-                               int tokens,
-                               double cost,
-                               bool usageEstimated,
-                               bool costKnown) const
+                               int inputTokens,
+                               int outputTokens,
+                               int totalTokens,
+                               bool usageEstimated) const
 {
-    state.usedTokens += tokens;
-    state.usedCost += cost;
-    state.phaseUsedTokens += tokens;
-    state.phaseUsedCost += cost;
+    state.usedTokens += totalTokens;
+    state.phaseUsedTokens += totalTokens;
     state.usageEstimateUsed = state.usageEstimateUsed || usageEstimated;
-    state.costEstimateComplete = state.costEstimateComplete && costKnown;
 
     auto it = std::find_if(state.seatUsage.begin(), state.seatUsage.end(), [&seatId](const SeatUsageTally &usage) {
         return usage.seatId == seatId;
@@ -43,10 +40,10 @@ void BudgetManager::applyUsage(SessionState &state,
         state.seatUsage.append(usage);
         it = std::prev(state.seatUsage.end());
     }
-    it->totalTokens += tokens;
-    it->totalCost += cost;
-    it->phaseTokens += tokens;
-    it->phaseCost += cost;
+    it->totalTokens += totalTokens;
+    it->inputTokens += inputTokens;
+    it->outputTokens += outputTokens;
+    it->phaseTokens += totalTokens;
 }
 
 int BudgetManager::tokenReserve(const SessionState &state) const
@@ -59,9 +56,6 @@ BudgetStatus BudgetManager::status(const SessionState &state,
                                    const BudgetPolicy *budgetOverride) const
 {
     const BudgetPolicy &budget = budgetOverride ? *budgetOverride : state.budgetPolicy;
-    if (state.stopPolicy.stopOnBudgetExceeded && state.usedCost >= budget.maxTotalCost) {
-        return {BudgetLimitKind::MaxTotalCost, BudgetLimitAction::PromptToContinue, "The maximum cost limit has been reached."};
-    }
     if (state.round > budget.maxRounds) {
         return {BudgetLimitKind::MaxRoundsPerPhase, BudgetLimitAction::EndPhase, "The maximum round limit for this phase has been reached."};
     }

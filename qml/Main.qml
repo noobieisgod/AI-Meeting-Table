@@ -252,7 +252,6 @@ ApplicationWindow {
         fontCombo.currentIndex = Math.max(0, fontCombo.model.indexOf(appearanceSettings.fontStyle));
         maxPhaseTokens.text = String(appearanceSettings.maxTokensPerPhase);
         maxTotalTokens.text = String(appearanceSettings.maxTotalTokens);
-        maxCost.text = String(appearanceSettings.maxTotalCost);
         maxRounds.text = String(appearanceSettings.maxRounds);
         maxLoops.text = String(appearanceSettings.maxExecQcLoops);
         maxPhaseSeconds.text = String(appearanceSettings.maxPhaseSeconds);
@@ -271,12 +270,11 @@ ApplicationWindow {
         limitError.text = "";
         var phaseTokens = Number(maxPhaseTokens.text);
         var totalTokens = Number(maxTotalTokens.text);
-        var cost = Number(maxCost.text);
         var rounds = Number(maxRounds.text);
         var loops = Number(maxLoops.text);
         var phaseSeconds = Number(maxPhaseSeconds.text);
         var sessionSeconds = Number(maxSessionSeconds.text);
-        if (![phaseTokens, totalTokens, cost, rounds, loops, phaseSeconds, sessionSeconds].every(function (value) { return value > 0; })) {
+        if (![phaseTokens, totalTokens, rounds, loops, phaseSeconds, sessionSeconds].every(function (value) { return value > 0; })) {
             limitError.text = "Every hard stop must be a positive value.";
             return;
         }
@@ -288,7 +286,7 @@ ApplicationWindow {
             limitError.text = "Session seconds must be at least the phase limit.";
             return;
         }
-        if (!appController.saveGlobalBudget(phaseTokens, totalTokens, cost, rounds, loops, phaseSeconds, sessionSeconds)) {
+        if (!appController.saveGlobalBudget(phaseTokens, totalTokens, rounds, loops, phaseSeconds, sessionSeconds)) {
             limitError.text = appController.lastError();
             return;
         }
@@ -605,7 +603,7 @@ ApplicationWindow {
 
                         GridLayout {
                             Layout.fillWidth: true
-                            columns: root.width >= 900 ? 5 : 2
+                            columns: root.width >= 900 ? 6 : 2
                             rowSpacing: 1
                             columnSpacing: 1
                             Repeater {
@@ -613,15 +611,15 @@ ApplicationWindow {
                                     { label: "Status", value: root.currentTable.phase || "Idle" },
                                     { label: "Elapsed", value: root.currentTable.elapsed || "00:00" },
                                     { label: "Round", value: String(root.currentTable.round || 0) },
-                                    { label: "Tokens", value: (root.currentTable.usageEstimated ? "Approx. " : "") + (root.currentTable.usedTokens || 0) + " / " + (root.currentTable.maxTokens || 0) },
-                                    { label: root.currentTable.costEstimateComplete === false ? "Cost estimate" : "Cost", value: root.currentTable.costEstimateComplete === false ? "Unavailable / $" + Number(root.currentTable.maxCost || 0).toFixed(2) : "$" + Number(root.currentTable.usedCost || 0).toFixed(2) + " / $" + Number(root.currentTable.maxCost || 0).toFixed(2) }
+                                    { label: "Input tokens", value: root.currentTable.tokenBreakdownKnown === false ? "Unavailable" : String(root.currentTable.inputTokens || 0) },
+                                    { label: "Output tokens", value: root.currentTable.tokenBreakdownKnown === false ? "Unavailable" : String(root.currentTable.outputTokens || 0) },
+                                    { label: "Total tokens", value: (root.currentTable.usageEstimated ? "Approx. " : "") + (root.currentTable.usedTokens || 0) + " / " + (root.currentTable.maxTokens || 0) }
                                 ]
                                 delegate: Rectangle {
                                     id: metric
                                     required property int index
                                     required property var modelData
                                     Layout.fillWidth: true
-                                    Layout.columnSpan: metric.index === 4 && root.width < 900 ? 2 : 1
                                     Layout.minimumWidth: 110
                                     Layout.preferredHeight: 62
                                     color: root.raisedColor
@@ -1123,7 +1121,7 @@ ApplicationWindow {
                                                     Label {
                                                         text: {
                                                             root.settingsGeneration;
-                                                            return root.appController.apiKeyStatus(providerCard.index);
+                                                            return root.appController.hasCredential(providerCard.index) ? "Saved" : "Not saved";
                                                         }
                                                         color: root.mutedColor
                                                         font.pixelSize: 11
@@ -1137,6 +1135,7 @@ ApplicationWindow {
                                                             onClicked: {
                                                                 if (root.appController.saveApiKey(providerCard.index, "")) {
                                                                     keyField.clear();
+                                                                    providerCard.reveal = false;
                                                                     root.refreshSettings();
                                                                     root.showToast(providerCard.modelData + " key cleared");
                                                                 } else root.showErrorIfNeeded();
@@ -1148,6 +1147,8 @@ ApplicationWindow {
                                                             enabled: keyField.text.length > 0
                                                             onClicked: {
                                                                 if (root.appController.saveApiKey(providerCard.index, keyField.text)) {
+                                                                    keyField.clear();
+                                                                    providerCard.reveal = false;
                                                                     root.refreshSettings();
                                                                     root.showToast(providerCard.modelData + " key saved");
                                                                 } else root.showErrorIfNeeded();
@@ -1195,8 +1196,6 @@ ApplicationWindow {
                                         TextField { id: maxPhaseTokens; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
                                         Label { text: "Max total tokens"; color: root.textColor }
                                         TextField { id: maxTotalTokens; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
-                                        Label { text: "Max total cost (USD)"; color: root.textColor }
-                                        TextField { id: maxCost; Layout.fillWidth: true; inputMethodHints: Qt.ImhFormattedNumbersOnly; validator: DoubleValidator { bottom: 0.01; decimals: 2 } }
                                         Label { text: "Max rounds"; color: root.textColor }
                                         TextField { id: maxRounds; Layout.fillWidth: true; inputMethodHints: Qt.ImhDigitsOnly; validator: IntValidator { bottom: 1 } }
                                         Label { text: "Max Execution / QC loops"; color: root.textColor }
@@ -1303,13 +1302,14 @@ ApplicationWindow {
 
     Dialog {
         id: seatDialog
+        parent: Overlay.overlay
         title: root.addingSeat ? "Add Seat" : "Configure seat"
         modal: true
         standardButtons: Dialog.Save | Dialog.Cancel
         width: Math.min(root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - 24, 560)
         height: Math.min(root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - 36, 720)
-        x: root.SafeArea.margins.left + (root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - width) / 2
-        y: root.SafeArea.margins.top + Math.max(18, (root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - height) / 2)
+        x: Math.round(root.SafeArea.margins.left + (root.width - root.SafeArea.margins.left - root.SafeArea.margins.right - width) / 2)
+        y: Math.round(root.SafeArea.margins.top + (root.height - root.SafeArea.margins.top - root.SafeArea.margins.bottom - height) / 2)
         onAccepted: {
             var selectedModel = modelCombo.model && modelCombo.model.length > modelCombo.currentIndex ? modelCombo.model[modelCombo.currentIndex].id : "";
             if (!root.appController.saveSeat(root.editingSeatIndex, root.addingSeat ? true : occupiedSwitch.checked, seatNameField.text, providerCombo.currentIndex, selectedModel, effortCombo.currentIndex, roleCombo.currentIndex, colorCombo.currentValue)) root.showErrorIfNeeded();

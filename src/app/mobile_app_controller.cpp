@@ -1,7 +1,6 @@
 #include "app/mobile_app_controller.h"
 
 #include <algorithm>
-#include <cmath>
 
 #include <QClipboard>
 #include <QDebug>
@@ -420,7 +419,6 @@ QVariantMap MobileAppController::settings() const
         {"fontStyle", settings.fontStyle},
         {"maxTokensPerPhase", budget.maxTokensPerPhase},
         {"maxTotalTokens", budget.maxTotalTokens},
-        {"maxTotalCost", budget.maxTotalCost},
         {"maxRounds", budget.maxRounds},
         {"maxExecQcLoops", budget.maxExecQcLoops},
         {"maxPhaseSeconds", budget.maxPhaseSeconds},
@@ -437,21 +435,12 @@ QVariantMap MobileAppController::attachmentSafeguards() const
     };
 }
 
-QString MobileAppController::apiKey(int providerIndex) const
+bool MobileAppController::hasCredential(int providerIndex) const
 {
-    return m_context.credentialStore()->loadApiKey(providerFromIndex(providerIndex));
-}
-
-QString MobileAppController::apiKeyStatus(int providerIndex) const
-{
-    const QString key = apiKey(providerIndex).trimmed();
-    if (key.isEmpty()) {
-        return "No key saved";
-    }
-    if (key.size() <= 8) {
-        return "Saved key";
-    }
-    return QString("Saved: %1...%2").arg(key.left(4), key.right(4));
+    return !m_context.credentialStore()
+                ->loadApiKey(providerFromIndex(providerIndex))
+                .trimmed()
+                .isEmpty();
 }
 
 QString MobileAppController::lastError() const
@@ -847,6 +836,7 @@ bool MobileAppController::saveApiKey(int providerIndex, const QString &apiKey)
         setError(error);
         return false;
     }
+    setError({});
     emit settingsChanged();
     return true;
 }
@@ -889,7 +879,6 @@ bool MobileAppController::saveAppearance(const QString &appearance,
 
 bool MobileAppController::saveGlobalBudget(int maxTokensPerPhase,
                                            int maxTotalTokens,
-                                           double maxTotalCost,
                                            int maxRounds,
                                            int maxExecQcLoops,
                                            int maxPhaseSeconds,
@@ -897,8 +886,6 @@ bool MobileAppController::saveGlobalBudget(int maxTokensPerPhase,
 {
     if (maxTokensPerPhase <= 0
         || maxTotalTokens <= 0
-        || !std::isfinite(maxTotalCost)
-        || maxTotalCost <= 0.0
         || maxRounds <= 0
         || maxExecQcLoops <= 0
         || maxPhaseSeconds <= 0
@@ -915,10 +902,9 @@ bool MobileAppController::saveGlobalBudget(int maxTokensPerPhase,
         return false;
     }
 
-    BudgetPolicy policy;
+    BudgetPolicy policy = m_context.appSettings().globalBudgetDefaults;
     policy.maxTokensPerPhase = maxTokensPerPhase;
     policy.maxTotalTokens = maxTotalTokens;
-    policy.maxTotalCost = maxTotalCost;
     policy.maxRounds = maxRounds;
     policy.maxExecQcLoops = maxExecQcLoops;
     policy.maxPhaseSeconds = maxPhaseSeconds;
@@ -1144,6 +1130,12 @@ ProviderKind MobileAppController::providerFromIndex(int providerIndex) const
 
 QVariantMap MobileAppController::tableSummary(const SessionState &state) const
 {
+    int inputTokens = 0;
+    int outputTokens = 0;
+    for (const auto &usage : state.seatUsage) {
+        inputTokens += usage.inputTokens;
+        outputTokens += usage.outputTokens;
+    }
     QVariantMap row;
     row.insert("tableId", state.tableId);
     row.insert("title", state.title);
@@ -1152,11 +1144,12 @@ QVariantMap MobileAppController::tableSummary(const SessionState &state) const
     row.insert("round", state.round);
     row.insert("activeSeatId", state.activeSeatId);
     row.insert("usedTokens", state.usedTokens);
+    row.insert("inputTokens", inputTokens);
+    row.insert("outputTokens", outputTokens);
+    row.insert("tokenBreakdownKnown",
+               state.usedTokens == 0 || inputTokens + outputTokens > 0);
     row.insert("usageEstimated", state.usageEstimateUsed);
     row.insert("maxTokens", state.budgetPolicy.maxTotalTokens);
-    row.insert("usedCost", state.usedCost);
-    row.insert("costEstimateComplete", state.costEstimateComplete);
-    row.insert("maxCost", state.budgetPolicy.maxTotalCost);
     row.insert("elapsed", formatElapsed(state.elapsedSeconds));
     row.insert("transcriptCount", state.transcript.size());
     row.insert("attachmentCount", state.attachments.size());

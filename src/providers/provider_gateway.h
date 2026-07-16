@@ -54,8 +54,6 @@ struct ProviderResponse {
     int usedTokens = 0;
     bool usageReported = false;
     bool usageEstimated = false;
-    double estimatedCost = 0.0;
-    bool costKnown = false;
     QString errorMessage;
     QJsonObject attachmentProviderHandles;
     quint64 runGeneration = 0;

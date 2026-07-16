@@ -279,11 +279,11 @@ QString phasePurposeText(Phase phase)
     case Phase::Research:
         return "Research phase: Work independently. Gather evidence, identify uncertainties, and note useful constraints. Do not collaborate, create the final result, issue a plan, make a QC ruling, or make a final decision.";
     case Phase::Planning:
-        return "Planning phase: Compare research and form a plan. Do not create the final result. The Lead Planner owns the plan unless another seat identifies a concrete, evidence-backed flaw.";
+        return "Planning phase: Participants contribute concise new constraints first. The Lead Planner then owns the authoritative consolidated plan. Do not create the final result.";
     case Phase::Execution:
-        return "Execution phase: Create or revise the official artifact. Only the Lead Executioner owns the official artifact. Other seats may give constraints, snippets, examples, or warnings.";
+        return "Execution phase: Participants contribute concise new material first. The Lead Executioner then creates or patches the authoritative artifact directly. Other seats must not present a competing artifact.";
     case Phase::QualityControl:
-        return "Quality Control phase: Review and verify the artifact. Do not rewrite it unless explicitly instructed. Only the Lead Quality Control reviewer may issue the final QC ruling.";
+        return "Quality Control phase: Review and verify the current artifact without rewriting it. Participants contribute new evidence first. The Lead Quality Control reviewer consolidates all blocking corrections, optional improvements, open findings, and resolved findings in one review.";
     case Phase::Present:
         return "Final Decision phase: Review the artifact and discussion. Only the Final Decision Maker may approve, revise, stop, or issue final delivery rulings.";
     default:
@@ -301,6 +301,7 @@ QString stablePromptText()
         "Research policy: use online research only when research tools are available and the task benefits from current, factual, niche, legal, technical, market, scientific, product, policy, or news information.",
         "Every substantive response must include exactly one short line: Research used: {brief source/tool summary}. If research tools are unavailable, write: Research used: none available. If tools are available but not needed, write: Research used: not needed.",
         "Quality rules: be concise and direct. Avoid filler, flattery, motivational language, generic AI-sounding structure, and formulaic ceremony. Do not use em dashes. Think through uncertainty and contradictions silently, then respond with the final answer only.",
+        "Convergence rules: add only new information, do not restate settled facts, do not repeat authority disclaimers or labels such as support notes, and keep participant contributions substantially shorter than the authoritative phase output. Resolved findings stay resolved unless new contradictory evidence appears.",
         "If evaluating or grading, define a rubric first and grade against it with justification. If MLA citations are requested, use current MLA guidance and cite in MLA style.",
         "History, roster, artifacts, and attachments are context. User instructions and current phase rules take priority."
     }.join("\n");
@@ -317,13 +318,13 @@ QString researchToolText(const ProviderRequest &request)
 QString leadAuthorityText(Phase phase, const QString &role)
 {
     if (phase == Phase::Planning && role == "Lead Planner") {
-        return "Lead authority: You are the Lead Planner. Own the plan. Other seats should defer unless they identify a concrete, evidence-backed flaw.";
+        return "Lead authority: You are the Lead Planner. Produce the authoritative consolidated plan after participant input. Other seats may identify a concrete, evidence-backed flaw but must not present a competing plan.";
     }
     if (phase == Phase::Execution && role == "Lead Executioner") {
-        return "Lead authority: You are the Lead Executioner. Create or revise the official artifact. Other seats should not present their own answer as the official artifact.";
+        return "Lead authority: You are the Lead Executioner. Produce the authoritative artifact directly, patching the current draft when revising. Other seats must not present their own answer as the official artifact.";
     }
     if (phase == Phase::QualityControl && role == "Lead Quality Control") {
-        return "Lead authority: You are the Lead Quality Control reviewer. Rule whether revision is required. Other seats may identify possible issues but must not issue the final QC ruling.";
+        return "Lead authority: You are the Lead Quality Control reviewer. Consolidate every detectable blocking issue in one review, preserve resolved findings, separate optional improvements, and rule whether revision is required. Other seats may provide evidence but must not issue the final QC ruling.";
     }
     if (phase == Phase::Present && role == "Final Decision Maker") {
         return "Lead authority: You are the Final Decision Maker. End with exactly one parseable ruling line: FINAL_RULING: APPROVE, FINAL_RULING: REVISE, or FINAL_RULING: STOP.";
@@ -520,83 +521,11 @@ bool geminiHandleLooksReusable(const QString &handle)
     return !uri.isEmpty() && uri.startsWith("https://") && !mimeType.isEmpty();
 }
 
-double openAiPricePerInputToken(const QString &model)
-{
-    if (model == "gpt-5") return 1.25 / 1000000.0;
-    if (model == "gpt-5-mini") return 0.25 / 1000000.0;
-    if (model == "gpt-5-nano") return 0.05 / 1000000.0;
-    if (model == "gpt-5.2") return 1.75 / 1000000.0;
-    if (model == "gpt-5.2-pro") return 21.00 / 1000000.0;
-    if (model == "gpt-5.1") return 1.25 / 1000000.0;
-    if (model == "gpt-5.1-codex") return 1.25 / 1000000.0;
-    if (model == "gpt-5-pro") return 15.00 / 1000000.0;
-    if (model == "o3") return 2.00 / 1000000.0;
-    if (model == "o3-pro") return 20.00 / 1000000.0;
-    if (model == "o4-mini") return 1.10 / 1000000.0;
-    return 0.0;
-}
-
-double openAiPricePerOutputToken(const QString &model)
-{
-    if (model == "gpt-5") return 10.00 / 1000000.0;
-    if (model == "gpt-5-mini") return 2.00 / 1000000.0;
-    if (model == "gpt-5-nano") return 0.40 / 1000000.0;
-    if (model == "gpt-5.2") return 14.00 / 1000000.0;
-    if (model == "gpt-5.2-pro") return 168.00 / 1000000.0;
-    if (model == "gpt-5.1") return 10.00 / 1000000.0;
-    if (model == "gpt-5.1-codex") return 10.00 / 1000000.0;
-    if (model == "gpt-5-pro") return 120.00 / 1000000.0;
-    if (model == "o3") return 8.00 / 1000000.0;
-    if (model == "o3-pro") return 80.00 / 1000000.0;
-    if (model == "o4-mini") return 4.40 / 1000000.0;
-    return 0.0;
-}
-
-// Issue #17: Gemini cost estimation
-double geminiPricePerInputToken(const QString &model)
-{
-    if (model.contains("gemini-2.5-pro") || model.contains("gemini-3.1-pro")) return 1.25 / 1000000.0;
-    if (model.contains("gemini-2.5-flash-lite") || model.contains("gemini-3.1-flash-lite")) return 0.04 / 1000000.0;
-    if (model.contains("gemini-2.5-flash") || model.contains("gemini-3-flash")) return 0.15 / 1000000.0;
-    if (model.contains("gemini-2.0-flash-lite")) return 0.04 / 1000000.0;
-    if (model.contains("gemini-2.0-flash")) return 0.10 / 1000000.0;
-    return 0.0;
-}
-
-double geminiPricePerOutputToken(const QString &model)
-{
-    if (model.contains("gemini-2.5-pro") || model.contains("gemini-3.1-pro")) return 10.00 / 1000000.0;
-    if (model.contains("gemini-2.5-flash-lite") || model.contains("gemini-3.1-flash-lite")) return 0.15 / 1000000.0;
-    if (model.contains("gemini-2.5-flash") || model.contains("gemini-3-flash")) return 0.60 / 1000000.0;
-    if (model.contains("gemini-2.0-flash-lite")) return 0.15 / 1000000.0;
-    if (model.contains("gemini-2.0-flash")) return 0.40 / 1000000.0;
-    return 0.0;
-}
-
-// Issue #17: Anthropic cost estimation
-double anthropicPricePerInputToken(const QString &model)
-{
-    if (model.contains("claude-sonnet-4") || model.contains("claude-3.5-sonnet")) return 3.00 / 1000000.0;
-    if (model.contains("claude-opus-4") || model.contains("claude-3-opus")) return 15.00 / 1000000.0;
-    if (model.contains("claude-haiku-4") || model.contains("claude-3.5-haiku") || model.contains("claude-3-haiku")) return 0.80 / 1000000.0;
-    return 0.0;
-}
-
-double anthropicPricePerOutputToken(const QString &model)
-{
-    if (model.contains("claude-sonnet-4") || model.contains("claude-3.5-sonnet")) return 15.00 / 1000000.0;
-    if (model.contains("claude-opus-4") || model.contains("claude-3-opus")) return 75.00 / 1000000.0;
-    if (model.contains("claude-haiku-4") || model.contains("claude-3.5-haiku") || model.contains("claude-3-haiku")) return 4.00 / 1000000.0;
-    return 0.0;
-}
-
 void setUsage(ProviderResponse &response,
               const QString &promptText,
               int inputTokens,
               int outputTokens,
               int totalTokens,
-              double inputPrice,
-              double outputPrice,
               bool providerReported)
 {
     response.inputTokens = qMax(0, inputTokens);
@@ -609,11 +538,6 @@ void setUsage(ProviderResponse &response,
         response.inputTokens = estimatedTokenCount(promptText);
         response.outputTokens = estimatedTokenCount(response.content);
         response.usedTokens = response.inputTokens + response.outputTokens;
-    }
-    response.costKnown = inputPrice > 0.0 && outputPrice > 0.0 && response.cachedTokens == 0;
-    if (response.costKnown) {
-        response.estimatedCost = response.inputTokens * inputPrice
-            + response.outputTokens * outputPrice;
     }
 }
 
@@ -631,8 +555,6 @@ void setReportedFailureUsage(const ProviderRequest &request,
     int inputTokens = 0;
     int outputTokens = 0;
     int totalTokens = 0;
-    double inputPrice = 0.0;
-    double outputPrice = 0.0;
     switch (request.provider) {
     case ProviderKind::OpenAI:
         usage = json.value("usage").toObject();
@@ -644,8 +566,6 @@ void setReportedFailureUsage(const ProviderRequest &request,
                                     .value("cached_tokens").toInt();
         response.reasoningTokens = usage.value("output_tokens_details").toObject()
                                        .value("reasoning_tokens").toInt();
-        inputPrice = openAiPricePerInputToken(response.modelUsed);
-        outputPrice = openAiPricePerOutputToken(response.modelUsed);
         break;
     case ProviderKind::Gemini:
         usage = json.value("usageMetadata").toObject();
@@ -655,8 +575,6 @@ void setReportedFailureUsage(const ProviderRequest &request,
         response.reasoningTokens = usage.value("thoughtsTokenCount").toInt();
         outputTokens = usage.value("candidatesTokenCount").toInt() + response.reasoningTokens;
         totalTokens = usage.value("totalTokenCount").toInt(inputTokens + outputTokens);
-        inputPrice = geminiPricePerInputToken(response.modelUsed);
-        outputPrice = geminiPricePerOutputToken(response.modelUsed);
         break;
     case ProviderKind::Anthropic:
         usage = json.value("usage").toObject();
@@ -666,13 +584,10 @@ void setReportedFailureUsage(const ProviderRequest &request,
         response.cachedTokens = usage.value("cache_creation_input_tokens").toInt()
             + usage.value("cache_read_input_tokens").toInt();
         totalTokens = inputTokens + outputTokens + response.cachedTokens;
-        inputPrice = anthropicPricePerInputToken(response.modelUsed);
-        outputPrice = anthropicPricePerOutputToken(response.modelUsed);
         break;
     }
     if (!usage.isEmpty()) {
-        setUsage(response, {}, inputTokens, outputTokens, totalTokens,
-                 inputPrice, outputPrice, true);
+        setUsage(response, {}, inputTokens, outputTokens, totalTokens, true);
     }
 }
 
@@ -847,8 +762,7 @@ ProviderResponse callOpenAi(QNetworkAccessManager &manager,
                                    .value("reasoning_tokens").toInt();
     setUsage(response, promptText, inputTokens, outputTokens,
              usage.value("total_tokens").toInt(inputTokens + outputTokens),
-             openAiPricePerInputToken(response.modelUsed),
-             openAiPricePerOutputToken(response.modelUsed), !usage.isEmpty());
+             !usage.isEmpty());
     return response;
 }
 
@@ -1019,8 +933,7 @@ ProviderResponse callGemini(QNetworkAccessManager &manager,
         + response.reasoningTokens;
     setUsage(response, buildPromptText(request), promptTokens, outputTokens,
              usage.value("totalTokenCount").toInt(promptTokens + outputTokens),
-             geminiPricePerInputToken(response.modelUsed),
-             geminiPricePerOutputToken(response.modelUsed), !usage.isEmpty());
+             !usage.isEmpty());
     return response;
 }
 
@@ -1147,8 +1060,7 @@ ProviderResponse callAnthropic(QNetworkAccessManager &manager,
         + usage.value("cache_read_input_tokens").toInt();
     setUsage(response, promptText, inputTokens, outputTokens,
              inputTokens + outputTokens + response.cachedTokens,
-             anthropicPricePerInputToken(response.modelUsed),
-             anthropicPricePerOutputToken(response.modelUsed), !usage.isEmpty());
+             !usage.isEmpty());
     return response;
 }
 
