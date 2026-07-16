@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(AIMeetingTable VERSION 0.3.0 LANGUAGES CXX)
+project(AIMeetingTable VERSION 1.0.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -91,7 +91,7 @@ if (ANDROID)
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_ABIS "arm64-v8a"
         QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
-        QT_ANDROID_VERSION_CODE 3
+        QT_ANDROID_VERSION_CODE 4
     )
     add_android_openssl_libraries(AIMeetingTable)
 

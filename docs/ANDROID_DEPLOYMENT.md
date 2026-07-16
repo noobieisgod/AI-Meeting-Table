@@ -103,6 +103,13 @@ C:\Tmp\aimeetingtable-startup-logcat-fixed-2.txt
 
 ## Configure Optimized Release Build
 
+Android 1.0.0 release metadata:
+
+- Version name: `1.0.0`
+- Version code: `4`
+- Package id: `com.aimeetingtable.myapp`
+- ABI: `arm64-v8a`
+
 ```powershell
 C:\QtFresh\6.11.1\android_arm64_v8a\bin\qt-cmake.bat `
   -G Ninja `
