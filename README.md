@@ -21,8 +21,6 @@ Version 1.0.0 is the current source baseline. The Windows application uses Qt Wi
 
 Prebuilt Windows packages are available from [GitHub Releases](https://github.com/noobieisgod/AI-Meeting-Table/releases). Android production signing and store publishing remain manual.
 
-![AI Meeting Table Android session](apps/android/store-listing/screenshots/02-transcript.png)
-
 ## Features
 
 - OpenAI, Google Gemini, and Anthropic provider support
