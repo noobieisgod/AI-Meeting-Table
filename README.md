@@ -91,7 +91,7 @@ You should still use normal caution:
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0.
+This project is licensed under the MIT license.
 
 Full license text:
 https://github.com/noobieisgod/AI-Meeting-Table/blob/main/LICENSE
