@@ -1,5 +1,17 @@
-# AI Meeting Table
-### Powerful native Windows and Android application that coordinates multiple AI models through a structured meeting workflow.
+<div align="center">
+  <img src="apps/android/Icon%20Logo.png" alt="AI Meeting Table icon" width="132">
+  <h1>AI Meeting Table</h1>
+  <p><strong>Powerful native Windows and Android application that coordinates multiple AI models through a structured meeting workflow.</strong></p>
+  <p>
+    <a href="https://github.com/noobieisgod/AI-Meeting-Table/actions/workflows/ci.yml"><img src="https://github.com/noobieisgod/AI-Meeting-Table/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Android-5865f2" alt="Windows and Android">
+    <img src="https://img.shields.io/badge/Qt-6.8%2B-41cd52?logo=qt&amp;logoColor=white" alt="Qt 6.8 or newer">
+    <img src="https://img.shields.io/badge/C%2B%2B-20-00599c?logo=cplusplus&amp;logoColor=white" alt="C++20">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f2c744" alt="MIT license"></a>
+  </p>
+</div>
+
+Give each AI model a seat, role, and provider, then guide the table through research, planning, execution, quality control, and a final decision while preserving one shared transcript and artifact history.
 
 Version 1.0.0 is the current source baseline. The Windows application uses Qt Widgets. The Android application uses Qt Quick and targets arm64 devices running Android 9 or newer.
 
