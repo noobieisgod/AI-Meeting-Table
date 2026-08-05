@@ -17,7 +17,7 @@
 
 Give each AI model a seat, role, and provider, then guide the table through research, planning, execution, quality control, and a final decision while preserving one shared transcript and artifact history.
 
-Version 1.0.0 is the current source baseline. The Windows application uses Qt Widgets. The Android application uses Qt Quick and targets arm64 devices running Android 9 or newer.
+Version 1.1.0 is the current source baseline. The Windows application uses Qt Widgets. The Android application uses Qt Quick and targets arm64 devices running Android 9 or newer.
 
 Prebuilt Windows packages are available from [GitHub Releases](https://github.com/noobieisgod/AI-Meeting-Table/releases). Android production signing and store publishing remain manual.
 
