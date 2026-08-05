@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/branding">
+    <file alias="full_logo.png">Full Logo.png</file>
+    <file alias="icon_logo.png">Icon Logo.png</file>
+  </qresource>
+</RCC>

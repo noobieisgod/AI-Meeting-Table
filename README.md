@@ -1,97 +1,65 @@
 # AI Meeting Table
 
-AI Meeting Table is a native Windows app where multiple AI models work together in a structured, phase-driven workflow with defined roles, software-level authority rules, and a shared artifact used to solve a user task.
+AI Meeting Table is a native Windows and Android application that coordinates multiple AI models through a structured meeting workflow. Seats have explicit providers, models, and roles, while the application enforces phase and authority rules and maintains a shared transcript and artifact history.
 
-## How to Install
+## Project status
 
-1. Go to [https://github.com/noobieisgod/AI-Meeting-Table/releases](https://github.com/noobieisgod/AI-Meeting-Table/releases).
-2. Download the latest ZIP release.
-3. Unzip the ZIP file.
-4. Open the unzipped folder.
-5. Run `AIMeetingTable.exe`.
+Version 1.0.0 is the current source baseline. The Windows application uses Qt Widgets. The Android application uses Qt Quick and targets arm64 devices running Android 9 or newer.
 
-## How to Set Up
+Prebuilt Windows packages are available from [GitHub Releases](https://github.com/noobieisgod/AI-Meeting-Table/releases). Android production signing and store publishing remain manual.
 
-1. Open Settings.
-2. Under Provider Credentials, enter the API keys you want to use:
-   - OpenAI API Key
-   - Gemini API Key
-   - Anthropic API Key
-3. Optional: click Refresh Models after adding your keys so the app can fetch the latest available models from your configured providers.
-4. Create a new meeting table or edit an existing one.
-5. Configure the seats in the meeting table:
-   - Turn on Seat is occupied for each seat you want to use.
-   - Give each seat a clear Display Name.
-   - Choose a Provider.
-   - Choose a Model.
-   - Choose an Effort level if that model supports it.
-   - Choose a Role.
-6. Make sure you have at least:
-   - one occupied non-final participant seat
-   - one Final Decision Maker seat if you want a judge or decision role
-7. Type your task or instruction into the message box in the transcript pane.
-8. Click Send.
-9. Click Run Session.
-
-### Optional Setup Tips
-
-- Use Lead Planner, Lead Executioner, and Lead Quality Control if you want a more structured workflow.
-- Use Add Attachment if you want the meeting to work with files.
-- Use Hard Stops in Settings if you want token, cost, round, or time limits.
-
-## Why This Is Different From Generic Wrapper Software
-
-This app is not just a thin user interface on top of provider APIs.
-
-It is built around a meeting workflow:
-
-- Multiple seats can be assigned to different providers and models in the same session.
-- Each seat has a defined role, not just a label.
-- The workflow moves through explicit phases such as research, planning, execution, quality control, and presentation.
-- The software enforces authority rules at the application level instead of relying only on prompt wording.
-- A Final Decision Maker can evaluate or rule on the meeting instead of every model acting as an equal free-form chatbot.
-- The meeting keeps a shared transcript, event log, and artifact history instead of treating every prompt as an isolated chat turn.
-- Attachments, artifacts, phase logic, and stop policies are part of the runtime model.
-
-The app is designed to coordinate models as a structured team, not just expose several chat boxes behind one interface.
+![AI Meeting Table Android session](apps/android/store-listing/screenshots/02-transcript.png)
 
 ## Features
 
-- Native Windows desktop app
-- Multi-provider setup across OpenAI, Gemini, and Anthropic
-- Seat-based model configuration
-- Role-based collaboration
-- Phase-driven workflow
-- Final Decision Maker or judge role
-- Shared transcript and event log
-- Shared evolving artifact output
-- Attachment support
-- Configurable hard stops for tokens, cost, rounds, and time
-- Pause, resume, continue, and follow-up meeting flow
-- Local persistence of meetings and UI state
+- OpenAI, Google Gemini, and Anthropic provider support
+- Configurable model seats and collaboration roles
+- Research, planning, execution, quality-control, and presentation phases
+- Final Decision Maker arbitration
+- Shared transcript, event log, attachments, and evolving artifacts
+- Token, round, loop, and time limits
+- Local persistence and pause, resume, continuation, and follow-up flows
 
-## Why the App Is Not Stealing Your API Keys
+## Requirements
 
-If you are worried about API key safety, this is how the app handles them:
+- CMake 3.21 or newer
+- A C++20 compiler
+- Qt 6.8 or newer
+- Windows: Qt Widgets, SQL, and Network modules with MSVC 2022
+- Android: Qt Quick, Quick Controls, SQL, and Network modules, Android SDK 36, NDK 27.2, and JDK 17
 
-- The app is open source, so the code can be inspected.
-- On Windows, API keys are stored through the Windows Credential Manager rather than being written plainly into the project folder.
-- The app loads those keys only when it needs to make a provider request.
-- The keys are then sent directly to the selected provider API as normal authentication headers.
-- The app does not require you to log into a central AI Meeting Table account.
-- The app does not route your API calls through a custom AI Meeting Table backend service.
+## Build and test
 
-That means the app is not designed around collecting and proxying your keys through someone else's server. It is a local desktop client that uses your own provider credentials to talk to the provider you selected.
+Windows:
 
-You should still use normal caution:
+```powershell
+cmake -S . -B build/windows -A x64 -DBUILD_TESTING=ON
+cmake --build build/windows --config Release
+ctest --test-dir build/windows -C Release --output-on-failure
+```
 
-- Only download releases from the official repository.
-- If you want the highest level of confidence, review the source code and build it yourself.
-- Rotate your API keys if you believe your machine has been compromised.
+Android:
+
+```powershell
+& "$env:QT_ROOT_DIR\bin\qt-cmake.bat" -S . -B build/android -G Ninja `
+  -DANDROID_SDK_ROOT="$env:ANDROID_SDK_ROOT" `
+  -DANDROID_NDK_ROOT="$env:ANDROID_NDK_ROOT" `
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --build build/android --target AIMeetingTable
+```
+
+See [Building](docs/BUILDING.md), [Testing](docs/TESTING.md), and [Architecture](docs/ARCHITECTURE.md) for details.
+
+## API keys and privacy
+
+Windows stores provider credentials with Windows Credential Manager. Android stores them through an Android Keystore-backed bridge. Supported builds send prompts, selected conversation context, and user-selected attachments directly to the configured AI provider over HTTPS. The project does not operate an intermediary backend.
+
+Review the [privacy policy](https://noobieisgod.github.io/AI-Meeting-Table/) before using provider credentials or sensitive material. Report security concerns according to [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change. Generated build directories, release archives, signing material, credentials, and local databases must not be committed.
 
 ## License
 
-This project is licensed under the MIT license.
-
-Full license text:
-https://github.com/noobieisgod/AI-Meeting-Table/blob/main/LICENSE
+AI Meeting Table is licensed under the [MIT License](LICENSE).

@@ -91,10 +91,10 @@
   <main>
     <article>
       <h1>Privacy Policy for AI Meeting Table</h1>
-      <p class="meta">Effective date: June 12, 2026</p>
+      <p class="meta">Effective date: August 5, 2026</p>
 
       <p class="summary">
-        AI Meeting Table is an Android productivity app that helps users run multi-agent AI meeting sessions. Users can enter prompts or goals, configure AI providers and models, attach files, generate transcripts and artifacts, and review local logs.
+        AI Meeting Table is a Windows and Android productivity app that helps users run multi-agent AI meeting sessions. Users can enter prompts or goals, configure AI providers and models, attach files, generate transcripts and artifacts, and review local logs.
       </p>
 
       <p><strong>Developer:</strong> noobieisgod</p>
@@ -111,7 +111,7 @@
       </ul>
 
       <h2>2. Information Stored Locally on Your Device</h2>
-      <p>The app stores session data in Android app-private storage, including:</p>
+      <p>The app stores session data in application-specific storage on your device, including:</p>
       <ul>
         <li>Meeting tables and settings</li>
         <li>Transcripts</li>
@@ -124,7 +124,7 @@
       <p>This local data remains on your device unless you delete it, clear app data, or uninstall the app.</p>
 
       <h2>3. API Keys</h2>
-      <p>You may enter API keys for OpenAI, Google Gemini, and Anthropic. The app stores API keys locally using Android secure storage where available.</p>
+      <p>You may enter API keys for OpenAI, Google Gemini, and Anthropic. Windows stores these keys with Windows Credential Manager. Android stores them through an Android Keystore-backed bridge.</p>
       <p>API keys are used to authenticate requests to the provider and model you select. API keys are not intentionally sold, shared for advertising, or logged in full.</p>
 
       <h2>4. Third-Party AI Providers</h2>
@@ -144,7 +144,7 @@
 
       <h2>5. Data Sharing</h2>
       <p>The app shares data with the AI provider you choose only as needed to provide AI responses, file processing, model refresh, or related AI session features.</p>
-      <p>The current mobile app does not use a developer-operated backend server. Provider requests are made from the app to the selected third-party AI provider.</p>
+      <p>The current supported applications do not use a developer-operated backend server. Provider requests are made from the app to the selected third-party AI provider.</p>
       <p>The developer does not sell personal data.</p>
 
       <h2>6. Data Retention</h2>
@@ -157,15 +157,16 @@
         <li>Deleting tables or session content in the app where those controls are available</li>
         <li>Removing attachments where available</li>
         <li>Clearing the app's data in Android system settings</li>
+        <li>Selecting removal of local app data when uninstalling the Windows application</li>
         <li>Uninstalling the app</li>
       </ul>
-      <p>Clearing app data or uninstalling the app removes app-private local sessions, transcripts, artifacts, logs, attachments, settings, and locally stored API keys.</p>
+      <p>On Android, clearing app data or uninstalling removes application-private sessions, transcripts, artifacts, logs, attachments, settings, and locally stored API keys. On Windows, selecting the uninstaller's local-data removal option removes application data and the app's provider credentials from Windows Credential Manager.</p>
 
       <h2>8. Children</h2>
       <p>AI Meeting Table is not directed to children. Users should only use the app and third-party AI providers if they meet the age and account requirements for those providers and for Google Play in their region.</p>
 
       <h2>9. Security</h2>
-      <p>AI Meeting Table uses Android app-private storage for local app data and Android secure storage for API keys where available. Network requests to AI providers use HTTPS.</p>
+      <p>AI Meeting Table uses application-specific local storage. Windows credentials use Windows Credential Manager, and Android credentials use an Android Keystore-backed bridge. Network requests to AI providers use HTTPS.</p>
       <p>No method of storage or transmission is perfectly secure. You should protect your device, API keys, and provider accounts.</p>
 
       <h2>10. International Users</h2>

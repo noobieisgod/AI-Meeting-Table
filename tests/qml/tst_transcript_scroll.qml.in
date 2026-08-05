@@ -1,0 +1,91 @@
+import QtQuick
+import QtTest
+import "TranscriptScroll.js" as TranscriptScroll
+
+TestCase {
+    id: testCase
+    name: "TranscriptScroll"
+    when: windowShown
+    width: 320
+    height: 240
+    visible: true
+
+    ListView {
+        id: transcriptList
+        width: 240
+        height: 160
+        model: 40
+        delegate: Rectangle {
+            required property int index
+            width: transcriptList.width
+            height: 32 + (index % 3) * 8
+        }
+    }
+
+    function settleLayout() {
+        wait(0);
+        transcriptList.forceLayout();
+        wait(20);
+        transcriptList.forceLayout();
+    }
+
+    function init() {
+        transcriptList.model = 40;
+        settleLayout();
+    }
+
+    function test_modelResetFollowsWhenNearBottom() {
+        transcriptList.positionViewAtEnd();
+        settleLayout();
+        var state = TranscriptScroll.capture(transcriptList, 64);
+        verify(state.follow);
+
+        transcriptList.model = 41;
+        settleLayout();
+        TranscriptScroll.restore(transcriptList, state);
+        wait(0);
+        var maximumY = Math.max(transcriptList.originY, transcriptList.contentHeight - transcriptList.height + transcriptList.originY);
+        fuzzyCompare(transcriptList.contentY, maximumY, 1);
+    }
+
+    function test_modelResetPreservesScrolledPosition() {
+        transcriptList.contentY = 240;
+        var state = TranscriptScroll.capture(transcriptList, 64);
+        verify(!state.follow);
+
+        transcriptList.model = 41;
+        settleLayout();
+        TranscriptScroll.restore(transcriptList, state);
+        fuzzyCompare(transcriptList.contentY, state.contentY, 1);
+    }
+
+    function test_nearBottomThreshold() {
+        var viewGeometry = {
+            originY: 0,
+            contentHeight: 1000,
+            height: 200,
+            contentY: 736,
+            count: 40
+        };
+        verify(TranscriptScroll.capture(viewGeometry, 64).follow);
+        viewGeometry.contentY = 735;
+        verify(!TranscriptScroll.capture(viewGeometry, 64).follow);
+    }
+
+    function test_savedTableStatesRemainIndependent() {
+        transcriptList.contentY = 240;
+        var states = {
+            tableA: TranscriptScroll.capture(transcriptList, 64)
+        };
+        transcriptList.positionViewAtEnd();
+        settleLayout();
+        states.tableB = TranscriptScroll.capture(transcriptList, 64);
+
+        TranscriptScroll.restore(transcriptList, states.tableA);
+        fuzzyCompare(transcriptList.contentY, states.tableA.contentY, 1);
+        TranscriptScroll.restore(transcriptList, states.tableB);
+        wait(0);
+        var maximumY = Math.max(transcriptList.originY, transcriptList.contentHeight - transcriptList.height + transcriptList.originY);
+        fuzzyCompare(transcriptList.contentY, maximumY, 1);
+    }
+}

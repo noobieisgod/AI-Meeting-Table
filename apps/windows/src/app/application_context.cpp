@@ -1,0 +1,298 @@
+#include "app/application_context.h"
+
+#include <algorithm>
+#include <QDebug>
+#include <QFileInfo>
+#include <QSettings>
+#include <QUuid>
+
+#ifdef QT_WIDGETS_LIB
+#include <QApplication>
+#endif
+
+namespace amt {
+
+ApplicationContext::ApplicationContext(QObject *parent)
+    : QObject(parent),
+      m_modelCatalogManager(&m_credentialStore, this),
+      m_sessionRunner(&m_eventBus,
+                      &m_workflowEngine,
+                      &m_providerGateway,
+                      &m_budgetManager,
+                      &m_artifactManager,
+                      [this](const QString &tableId) { return tableHandle(tableId); },
+                      this)
+{
+    m_providerGateway.setCredentialStore(&m_credentialStore);
+}
+
+bool ApplicationContext::initialize()
+{
+    QSettings settings;
+    m_appSettings.globalBudgetDefaults.maxTokensPerPhase = settings.value("budget/maxTokensPerPhase", m_appSettings.globalBudgetDefaults.maxTokensPerPhase).toInt();
+    m_appSettings.globalBudgetDefaults.maxTotalTokens = settings.value("budget/maxTotalTokens", m_appSettings.globalBudgetDefaults.maxTotalTokens).toInt();
+    m_appSettings.globalBudgetDefaults.maxTotalCost = settings.value("budget/maxTotalCost", m_appSettings.globalBudgetDefaults.maxTotalCost).toDouble();
+    m_appSettings.globalBudgetDefaults.maxRounds = settings.value("budget/maxRounds", m_appSettings.globalBudgetDefaults.maxRounds).toInt();
+    m_appSettings.globalBudgetDefaults.maxExecQcLoops = settings.value("budget/maxExecQcLoops", m_appSettings.globalBudgetDefaults.maxExecQcLoops).toInt();
+    m_appSettings.globalBudgetDefaults.maxPhaseSeconds = settings.value("budget/maxPhaseSeconds", m_appSettings.globalBudgetDefaults.maxPhaseSeconds).toInt();
+    m_appSettings.globalBudgetDefaults.maxSessionSeconds = settings.value("budget/maxSessionSeconds", m_appSettings.globalBudgetDefaults.maxSessionSeconds).toInt();
+    m_appSettings.theme = themeModeFromString(settings.value("appearance/theme", toString(m_appSettings.theme)).toString());
+
+    if (!m_databaseManager.initialize()) {
+        return false;
+    }
+
+    const auto loadedTables = m_databaseManager.loadTables();
+    m_tables.clear();
+    for (const auto &table : loadedTables) {
+        auto handle = std::make_shared<SessionState>(table);
+        applyEffectiveBudgetPolicy(*handle);
+        const bool restoreWarningAdded = validateRestoredArtifacts(*handle);
+        m_tables.append(handle);
+        if (restoreWarningAdded) {
+            save(*handle);
+        }
+    }
+    qInfo().noquote() << QString("Persistence restore: loaded tables=%1").arg(m_tables.size());
+    if (m_tables.isEmpty()) {
+        auto sample = std::make_shared<SessionState>(createSampleTable());
+        m_tables.append(sample);
+        save(*sample);
+        qInfo().noquote() << QString("Persistence restore: created initial table id=%1").arg(sample->tableId);
+    }
+    applyTheme();
+    return true;
+}
+
+QVector<ApplicationContext::SessionHandle> &ApplicationContext::tables()
+{
+    return m_tables;
+}
+
+const QVector<ApplicationContext::SessionHandle> &ApplicationContext::tables() const
+{
+    return m_tables;
+}
+
+SessionState ApplicationContext::createSampleTable() const
+{
+    SessionState state;
+    state.tableId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    state.title = "New Meeting Table";
+    state.updatedAt = QDateTime::currentDateTimeUtc();
+    state.phase = Phase::Idle;
+    state.round = 1;
+    state.logVisible = true;
+    state.budgetOverrides = m_appSettings.globalBudgetDefaults;
+    state.budgetPolicy = m_appSettings.globalBudgetDefaults;
+    for (int i = 0; i < 4; ++i) {
+        SeatConfig seat;
+        seat.seatId = QString("seat-%1").arg(i + 1);
+        seat.displayName = QString("Seat %1").arg(i + 1);
+        seat.occupied = false;
+        seat.enabled = false;
+        state.seats.append(seat);
+    }
+    state.finalDecisionMakerSeatId.clear();
+    return state;
+}
+
+bool ApplicationContext::save(const SessionState &state)
+{
+    SessionState updated = state;
+    updated.updatedAt = QDateTime::currentDateTimeUtc();
+    bool found = false;
+    for (auto &table : m_tables) {
+        if (table && table->tableId == updated.tableId) {
+            *table = updated;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        m_tables.append(std::make_shared<SessionState>(updated));
+    }
+    const bool saved = m_databaseManager.saveTable(updated);
+    if (!saved) {
+        qWarning().noquote() << QString("Persistence save failed: table=%1 title=%2").arg(updated.tableId, updated.title);
+    }
+    return saved;
+}
+
+bool ApplicationContext::removeTable(const QString &tableId)
+{
+    for (const auto &table : m_tables) {
+        if (table && table->tableId == tableId) {
+            if (!m_databaseManager.deleteTable(tableId)) {
+                return false;
+            }
+            const auto it = std::remove_if(m_tables.begin(), m_tables.end(), [&tableId](const SessionHandle &state) {
+                return state && state->tableId == tableId;
+            });
+            m_tables.erase(it, m_tables.end());
+            return true;
+        }
+    }
+    return false;
+}
+
+ApplicationContext::SessionHandle ApplicationContext::tableHandle(const QString &tableId) const
+{
+    for (const auto &table : m_tables) {
+        if (table && table->tableId == tableId) {
+            return table;
+        }
+    }
+    return {};
+}
+
+bool ApplicationContext::validateRestoredArtifacts(SessionState &state) const
+{
+    bool addedWarning = false;
+    for (const auto &artifact : state.artifacts) {
+        if (artifact.filePath.isEmpty() || QFileInfo::exists(artifact.filePath)) {
+            continue;
+        }
+
+        const QString warning = QString("Artifact file is missing after restore. Artifact metadata remains available. Version: %1")
+                                    .arg(artifact.versionId);
+        const bool alreadyLogged = std::any_of(state.log.cbegin(), state.log.cend(), [&](const LogEvent &event) {
+            return event.summary == warning;
+        });
+        if (alreadyLogged) {
+            continue;
+        }
+
+        LogEvent event;
+        event.logId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        event.tableId = state.tableId;
+        event.type = LogEventType::ProviderCallFailed;
+        event.phase = state.phase;
+        event.round = state.round;
+        event.timestamp = QDateTime::currentDateTimeUtc();
+        event.summary = warning;
+        state.log.append(event);
+        addedWarning = true;
+        qWarning().noquote() << QString("Persistence restore warning: table=%1 missing artifact=%2 path=%3")
+                                    .arg(state.tableId, artifact.versionId, artifact.filePath);
+    }
+    return addedWarning;
+}
+
+void ApplicationContext::saveAppSettings() const
+{
+    QSettings settings;
+    settings.setValue("budget/maxTokensPerPhase", m_appSettings.globalBudgetDefaults.maxTokensPerPhase);
+    settings.setValue("budget/maxTotalTokens", m_appSettings.globalBudgetDefaults.maxTotalTokens);
+    settings.setValue("budget/maxTotalCost", m_appSettings.globalBudgetDefaults.maxTotalCost);
+    settings.setValue("budget/maxRounds", m_appSettings.globalBudgetDefaults.maxRounds);
+    settings.setValue("budget/maxExecQcLoops", m_appSettings.globalBudgetDefaults.maxExecQcLoops);
+    settings.setValue("budget/maxPhaseSeconds", m_appSettings.globalBudgetDefaults.maxPhaseSeconds);
+    settings.setValue("budget/maxSessionSeconds", m_appSettings.globalBudgetDefaults.maxSessionSeconds);
+    settings.setValue("appearance/theme", toString(m_appSettings.theme));
+}
+
+void ApplicationContext::applyEffectiveBudgetPolicy(SessionState &state) const
+{
+    state.budgetPolicy = state.useBudgetOverrides ? state.budgetOverrides : m_appSettings.globalBudgetDefaults;
+}
+
+SessionRunner *ApplicationContext::sessionRunner()
+{
+    return &m_sessionRunner;
+}
+
+BudgetManager *ApplicationContext::budgetManager()
+{
+    return &m_budgetManager;
+}
+
+const BudgetManager *ApplicationContext::budgetManager() const
+{
+    return &m_budgetManager;
+}
+
+CredentialStore *ApplicationContext::credentialStore()
+{
+    return &m_credentialStore;
+}
+
+const CredentialStore *ApplicationContext::credentialStore() const
+{
+    return &m_credentialStore;
+}
+
+UploadManager *ApplicationContext::uploadManager()
+{
+    return &m_uploadManager;
+}
+
+const UploadManager *ApplicationContext::uploadManager() const
+{
+    return &m_uploadManager;
+}
+
+ModelCatalogManager *ApplicationContext::modelCatalogManager()
+{
+    return &m_modelCatalogManager;
+}
+
+const ModelCatalogManager *ApplicationContext::modelCatalogManager() const
+{
+    return &m_modelCatalogManager;
+}
+
+AppSettings &ApplicationContext::appSettings()
+{
+    return m_appSettings;
+}
+
+const AppSettings &ApplicationContext::appSettings() const
+{
+    return m_appSettings;
+}
+
+void ApplicationContext::applyTheme() const
+{
+#ifndef QT_WIDGETS_LIB
+    return;
+#else
+    if (!qApp) {
+        return;
+    }
+
+    if (m_appSettings.theme == ThemeMode::Dark) {
+        qApp->setStyleSheet(
+            "QMainWindow, QDialog, QWidget { background-color: #1d2128; color: #e6ebf2; }"
+            "QLabel { color: #e6ebf2; }"
+            "QLineEdit, QPlainTextEdit, QTextEdit, QListWidget, QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget::pane {"
+            "  background-color: #252b34; color: #eef3f8; border: 1px solid #48515d; }"
+            "QPushButton { background-color: #2d3641; color: #eef3f8; border: 1px solid #54606d; padding: 5px 10px; }"
+            "QPushButton:hover { background-color: #384453; }"
+            "QCheckBox { color: #e6ebf2; }"
+            "QHeaderView::section { background-color: #252b34; color: #eef3f8; border: 1px solid #48515d; }"
+            "#leftSidebar, #rightSidebar { border: 1px solid #48515d; background-color: #20252d; }"
+            "#centerWorkspace { border: 1px solid #48515d; background-color: #1b2027; }"
+            "#topStatusCard { background-color: #252b34; border: 1px solid #48515d; border-radius: 10px; }"
+            "#topStatusTitle { color: #97a6b8; font-size: 11px; }"
+            "#topStatusValue { color: #eef3f8; font-size: 15px; font-weight: 600; }"
+            "#meetingTableWidget { border: 1px solid #48515d; border-radius: 12px; background-color: #212731; }");
+        return;
+    }
+
+    qApp->setStyleSheet(
+        "QMainWindow, QDialog, QWidget { background-color: #f8f5ef; color: #342a1d; }"
+            "QLineEdit, QPlainTextEdit, QTextEdit, QListWidget, QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget::pane {"
+        "  background-color: #fbf8f2; color: #342a1d; border: 1px solid #d8cdbc; }"
+        "QPushButton { background-color: #f1e7d8; color: #342a1d; border: 1px solid #cfbea7; padding: 5px 10px; }"
+        "QPushButton:hover { background-color: #eadcc8; }"
+        "#leftSidebar, #rightSidebar { border: 1px solid #d8cdbc; background-color: #fbf7f1; }"
+        "#centerWorkspace { border: 1px solid #ddd0bd; background-color: #f8f3ea; }"
+        "#topStatusCard { background-color: #fbf8f2; border: 1px solid #d8cdbc; border-radius: 10px; }"
+        "#topStatusTitle { color: #7c6a55; font-size: 11px; }"
+        "#topStatusValue { color: #342a1d; font-size: 15px; font-weight: 600; }"
+        "#meetingTableWidget { border: 1px solid #d9ccb8; border-radius: 12px; background-color: #f6f0e5; }");
+#endif
+}
+
+}

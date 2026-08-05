@@ -1,0 +1,7 @@
+AI Meeting Table
+
+AI Meeting Table is distributed under the MIT License. The complete project license is included as LICENSE.txt and is available with the source code:
+
+https://github.com/noobieisgod/AI-Meeting-Table
+
+The packaged application also includes Qt libraries and other runtime components under their respective licenses. Their copyright notices and license terms remain the property of their authors. Release maintainers must review and include the notices required by the exact runtime files placed in each package.

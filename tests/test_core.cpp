@@ -1,0 +1,331 @@
+#include <QtTest>
+
+#include "core/response_parser.h"
+#include "core/workflow_engine.h"
+#include "services/budget_manager.h"
+
+using namespace amt;
+
+class CoreTests final : public QObject {
+  Q_OBJECT
+
+private slots:
+  void roleValidationAndSerialization();
+  void workflowTransitionsRemainStable();
+  void arbitrationTransitionsRouteCorrections();
+  void responseParsingRemainsStable();
+  void budgetBoundariesAndContinuationOverrides();
+  void phaseLeadsRunLastAndQcConverges();
+};
+
+void CoreTests::roleValidationAndSerialization() {
+  SeatConfig participant;
+  participant.seatId = "seat-1";
+  participant.displayName = "Planner";
+  participant.provider = ProviderKind::Gemini;
+  participant.modelId = "gemini-test";
+  participant.effort = ModelEffort::Deep;
+  participant.role = Role::LeadPlanner;
+  participant.occupied = true;
+  participant.enabled = true;
+
+  SeatConfig decisionMaker = participant;
+  decisionMaker.seatId = "seat-2";
+  decisionMaker.role = Role::FinalDecisionMaker;
+
+  QVector<SeatConfig> seats{participant, decisionMaker};
+  QCOMPARE(validateSeatRoleAssignments(seats), QString{});
+  QCOMPARE(findFinalDecisionMakerSeatId(seats), QString("seat-2"));
+
+  SeatConfig duplicateDecisionMaker = decisionMaker;
+  duplicateDecisionMaker.seatId = "seat-3";
+  seats.append(duplicateDecisionMaker);
+  QVERIFY(!validateSeatRoleAssignments(seats).isEmpty());
+
+  const SeatConfig restored = seatFromJson(seatToJson(participant));
+  QCOMPARE(restored.seatId, participant.seatId);
+  QCOMPARE(static_cast<int>(restored.provider),
+           static_cast<int>(participant.provider));
+  QCOMPARE(static_cast<int>(restored.role), static_cast<int>(participant.role));
+  QCOMPARE(static_cast<int>(restored.effort),
+           static_cast<int>(participant.effort));
+  QCOMPARE(restored.occupied, participant.occupied);
+
+  BudgetPolicy policy;
+  policy.maxTokensPerPhase = 321;
+  policy.maxTotalTokens = 654;
+  policy.maxTotalCost = 7.5;
+  const BudgetPolicy restoredPolicy = budgetPolicyFromJson(budgetPolicyToJson(policy));
+  QCOMPARE(restoredPolicy.maxTotalTokens, 654);
+  QCOMPARE(restoredPolicy.maxTotalCost, 7.5);
+}
+
+void CoreTests::workflowTransitionsRemainStable() {
+  SessionState state;
+  state.tableId = "workflow";
+  SeatConfig seat;
+  seat.seatId = "seat-1";
+  seat.occupied = true;
+  seat.enabled = true;
+  state.seats.append(seat);
+
+  WorkflowEngine engine;
+  WorkflowEvent started;
+  started.eventType = EventType::SessionStarted;
+  auto commands = engine.handleEvent(state, started);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Research));
+  QCOMPARE(commands.size(), 1);
+  QCOMPARE(static_cast<int>(commands.first().commandType),
+           static_cast<int>(RunnerCommandType::StartPhase));
+
+  state.pendingResearchResponses = 0;
+  WorkflowEvent researchComplete;
+  researchComplete.eventType = EventType::TurnCompleted;
+  researchComplete.payload.insert("seatId", "research-batch");
+  commands = engine.handleEvent(state, researchComplete);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Planning));
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Planning));
+
+  state.phase = Phase::Present;
+  WorkflowEvent approved;
+  approved.eventType = EventType::DecisionIssued;
+  approved.payload.insert("outcome", "Approve");
+  commands = engine.handleEvent(state, approved);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Completed));
+  QCOMPARE(static_cast<int>(commands.first().commandType),
+           static_cast<int>(RunnerCommandType::StopSession));
+}
+
+void CoreTests::arbitrationTransitionsRouteCorrections() {
+  WorkflowEngine engine;
+  WorkflowEvent decision;
+  decision.eventType = EventType::DecisionIssued;
+  decision.payload.insert("mode", "arbitration");
+
+  SessionState planning;
+  planning.tableId = "planning";
+  planning.phase = Phase::Planning;
+  planning.round = 2;
+  decision.payload.insert("outcome", "Revise");
+  auto commands = engine.handleEvent(planning, decision);
+  QCOMPARE(static_cast<int>(planning.phase), static_cast<int>(Phase::Planning));
+  QCOMPARE(planning.round, 3);
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Planning));
+
+  planning.phase = Phase::Planning;
+  decision.payload.insert("outcome", "Proceed");
+  commands = engine.handleEvent(planning, decision);
+  QCOMPARE(static_cast<int>(planning.phase),
+           static_cast<int>(Phase::Execution));
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Execution));
+
+  SessionState qualityControl;
+  qualityControl.tableId = "quality-control";
+  qualityControl.phase = Phase::QualityControl;
+  qualityControl.round = 2;
+  decision.payload.insert("outcome", "Revise");
+  commands = engine.handleEvent(qualityControl, decision);
+  QCOMPARE(static_cast<int>(qualityControl.phase),
+           static_cast<int>(Phase::Execution));
+  QCOMPARE(qualityControl.execQcLoopCount, 1);
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Execution));
+
+  qualityControl.phase = Phase::QualityControl;
+  decision.payload.insert("outcome", "Proceed");
+  commands = engine.handleEvent(qualityControl, decision);
+  QCOMPARE(static_cast<int>(qualityControl.phase),
+           static_cast<int>(Phase::Present));
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Present));
+}
+
+void CoreTests::responseParsingRemainsStable() {
+  QVERIFY(response::hasSkipPrefix("  SKIPPED because duplicate"));
+  QVERIFY(response::isSkipResponse("SKIP\nNo new evidence."));
+  QVERIFY(!response::isSkipResponse("SKIPPED\nNo new evidence."));
+  QCOMPARE(response::skipReason("SKIP"),
+           QString("No additional reason provided."));
+  QCOMPARE(response::skipReason("SKIP\nNo new evidence."),
+           QString("No new evidence."));
+
+  QCOMPARE(response::parseDecisionOutcome("Explanation\nFINAL_RULING: APPROVE",
+                                          false),
+           QString("Approve"));
+  QCOMPARE(response::parseDecisionOutcome("Explanation\nFINAL_RULING: APPROVE",
+                                          true),
+           QString("Proceed"));
+  QCOMPARE(
+      response::parseDecisionOutcome("acceptable\nFINAL_RULING: REVISE", false),
+      QString("Revise"));
+  QCOMPARE(response::parseDecisionOutcome(
+               "proceed with this version\nFINAL_RULING: REVISE", false),
+           QString("Revise"));
+  QCOMPARE(response::parseDecisionOutcome(
+               "missing evidence\nFINAL_RULING: REVISE", false),
+           QString("Revise"));
+  const auto multiple = response::parseDecision(
+      "FINAL_RULING: PROCEED\nExplanation\nFINAL_RULING: REVISE", true);
+  QCOMPARE(multiple.outcome, QString("Revise"));
+  QCOMPARE(multiple.explicitRulingCount, 2);
+  QVERIFY(multiple.hasMultipleExplicitRulings());
+  QCOMPARE(response::parseDecisionOutcome("FINAL_RULING: REVISE\n"
+                                          "FINAL_RULING: PROCEED",
+                                          true),
+           QString("Proceed"));
+  QCOMPARE(response::fallbackDecisionOutcome("ready to deliver"),
+           QString("Approve"));
+  QCOMPARE(response::fallbackDecisionOutcome("PROCEED: legacy explanation"),
+           QString("Approve"));
+}
+
+void CoreTests::budgetBoundariesAndContinuationOverrides() {
+  BudgetManager manager;
+  SessionState state;
+  state.budgetPolicy.maxTokensPerPhase = 10000;
+  state.budgetPolicy.maxTotalTokens = 5000;
+  state.budgetPolicy.maxTotalCost = 10.0;
+  state.stopPolicy.stopOnBudgetExceeded = true;
+
+  state.usedTokens = 5000;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxTotalTokens));
+
+  state.usedTokens = 4401;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::SafetyReserve));
+
+  BudgetPolicy continuation = state.budgetPolicy;
+  continuation.maxTotalTokens = 8000;
+  QCOMPARE(static_cast<int>(manager.status(state, 0, &continuation).kind),
+           static_cast<int>(BudgetLimitKind::None));
+
+  state.usedTokens = 0;
+  state.phaseUsedTokens = state.budgetPolicy.maxTokensPerPhase;
+  QCOMPARE(static_cast<int>(manager.status(state).action),
+           static_cast<int>(BudgetLimitAction::PromptToContinue));
+
+  state.phaseUsedTokens = 0;
+  state.round = state.budgetPolicy.maxRounds + 1;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxRoundsPerPhase));
+  QCOMPARE(static_cast<int>(manager.status(state).action),
+           static_cast<int>(BudgetLimitAction::PromptToContinue));
+
+  state.round = 1;
+  state.execQcLoopCount = state.budgetPolicy.maxExecQcLoops + 1;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxExecQcLoops));
+  QCOMPARE(static_cast<int>(manager.status(state).action),
+           static_cast<int>(BudgetLimitAction::PromptToContinue));
+
+  state.execQcLoopCount = 0;
+  state.phaseElapsedSeconds = state.budgetPolicy.maxPhaseSeconds;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxPhaseSeconds));
+  state.phaseElapsedSeconds = 0;
+  state.elapsedSeconds = state.budgetPolicy.maxSessionSeconds;
+  QCOMPARE(static_cast<int>(manager.status(state).kind),
+           static_cast<int>(BudgetLimitKind::MaxSessionSeconds));
+
+  SessionState totals;
+  manager.applyUsage(totals, "seat-1", 60, 40, 100);
+  manager.applyUsage(totals, "seat-2", 25, 15, 40, true);
+  QCOMPARE(totals.usedTokens, 140);
+  QCOMPARE(totals.phaseUsedTokens, 140);
+  QCOMPARE(totals.seatUsage.size(), 2);
+  QCOMPARE(totals.seatUsage.first().totalTokens, 100);
+  QCOMPARE(totals.seatUsage.last().totalTokens, 40);
+  QCOMPARE(totals.seatUsage.first().inputTokens, 60);
+  QCOMPARE(totals.seatUsage.first().outputTokens, 40);
+  QVERIFY(totals.usageEstimateUsed);
+}
+
+void CoreTests::phaseLeadsRunLastAndQcConverges() {
+  SessionState state;
+  state.tableId = "convergence";
+  state.round = 1;
+
+  const auto seat = [](const QString &id, Role role) {
+    SeatConfig value;
+    value.seatId = id;
+    value.displayName = id;
+    value.role = role;
+    value.occupied = true;
+    value.enabled = true;
+    return value;
+  };
+  state.seats = {
+      seat("planner", Role::LeadPlanner),
+      seat("execution", Role::LeadExecutioner),
+      seat("participant", Role::None),
+      seat("quality", Role::LeadQualityControl),
+      seat("decision", Role::FinalDecisionMaker)};
+  state.finalDecisionMakerSeatId = "decision";
+
+  state.phase = Phase::Planning;
+  QCOMPARE(activeSeatIdsForPhase(state).last(), QString("planner"));
+  state.phase = Phase::Execution;
+  QCOMPARE(activeSeatIdsForPhase(state).last(), QString("execution"));
+  state.phase = Phase::QualityControl;
+  QCOMPARE(activeSeatIdsForPhase(state).last(), QString("quality"));
+
+  SeatConfig disabled = seat("disabled", Role::None);
+  disabled.enabled = false;
+  state.seats.append(disabled);
+  QVERIFY(!activeSeatIdsForPhase(state).contains("disabled"));
+
+  TranscriptEntry participantReview;
+  participantReview.entryId = "participant-review";
+  participantReview.phase = Phase::QualityControl;
+  participantReview.round = 1;
+  participantReview.speakerSeatId = "participant";
+  participantReview.content = "Optional improvement: tighten one sentence.";
+  state.transcript.append(participantReview);
+  TranscriptEntry consolidatedReview = participantReview;
+  consolidatedReview.entryId = "quality-review";
+  consolidatedReview.speakerSeatId = "quality";
+  consolidatedReview.content =
+      "**Blocking correctness issues:**\nNone\nOptional improvements: tighten one sentence.\nOpen findings: None\nResolved findings: counts verified.";
+  state.transcript.append(consolidatedReview);
+  state.activeSeatId = "quality";
+  state.currentArtifactVersionId = "draft-v1";
+
+  WorkflowEngine engine;
+  WorkflowEvent completed;
+  completed.eventType = EventType::TurnCompleted;
+  completed.payload.insert("seatId", "quality");
+  auto commands = engine.handleEvent(state, completed);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Present));
+  QCOMPARE(static_cast<int>(commands.first().targetPhase),
+           static_cast<int>(Phase::Present));
+
+  state.phase = Phase::QualityControl;
+  WorkflowEvent revise;
+  revise.eventType = EventType::DecisionIssued;
+  revise.payload.insert("mode", "arbitration");
+  revise.payload.insert("outcome", "Revise");
+  const qsizetype transcriptCount = state.transcript.size();
+  commands = engine.handleEvent(state, revise);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Execution));
+  QCOMPARE(state.execQcLoopCount, 1);
+  QCOMPARE(state.currentArtifactVersionId, QString("draft-v1"));
+  QCOMPARE(state.transcript.size(), transcriptCount);
+
+  state.phase = Phase::Present;
+  WorkflowEvent approved;
+  approved.eventType = EventType::DecisionIssued;
+  approved.payload.insert("outcome", "Approve");
+  commands = engine.handleEvent(state, approved);
+  QCOMPARE(static_cast<int>(state.phase), static_cast<int>(Phase::Completed));
+  QCOMPARE(state.execQcLoopCount, 1);
+  QCOMPARE(static_cast<int>(commands.first().commandType),
+           static_cast<int>(RunnerCommandType::StopSession));
+}
+
+QTEST_GUILESS_MAIN(CoreTests)
+
+#include "test_core.moc"

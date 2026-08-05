@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
+        with:
+          version: 6.8.3
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Configure
+        run: cmake -S . -B build/windows -A x64 -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/windows --config Release
+      - name: Test
+        run: ctest --test-dir build/windows -C Release --output-on-failure
+
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Android SDK components
+        run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "ndk;27.2.12479018"
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
+        with:
+          version: 6.8.3
+          host: linux
+          target: android
+          arch: android_arm64_v8a
+          cache: true
+      - name: Configure
+        run: >-
+          $QT_ROOT_DIR/bin/qt-cmake -S . -B build/android -G Ninja
+          -DANDROID_SDK_ROOT=$ANDROID_HOME
+          -DANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+      - name: Build unsigned application
+        run: cmake --build build/android --target apk
