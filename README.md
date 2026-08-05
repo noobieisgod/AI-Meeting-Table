@@ -1,8 +1,5 @@
 # AI Meeting Table
-
-AI Meeting Table is a native Windows and Android application that coordinates multiple AI models through a structured meeting workflow. Seats have explicit providers, models, and roles, while the application enforces phase and authority rules and maintains a shared transcript and artifact history.
-
-## Project status
+### Powerful native Windows and Android application that coordinates multiple AI models through a structured meeting workflow.
 
 Version 1.0.0 is the current source baseline. The Windows application uses Qt Widgets. The Android application uses Qt Quick and targets arm64 devices running Android 9 or newer.
 
