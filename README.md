@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="apps/android/Icon%20Logo.png" alt="AI Meeting Table icon" width="132">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/android/Icon%20Logo%20White.png">
+    <source media="(prefers-color-scheme: light)" srcset="apps/android/Icon%20Logo.png">
+    <img src="apps/android/Icon%20Logo.png" alt="AI Meeting Table icon" width="132">
+  </picture>
   <h1>AI Meeting Table</h1>
   <p><strong>Powerful native Windows and Android application that coordinates multiple AI models through a structured meeting workflow.</strong></p>
   <p>
