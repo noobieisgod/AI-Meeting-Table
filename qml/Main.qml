@@ -16,7 +16,7 @@ ApplicationWindow {
     minimumWidth: 320
     minimumHeight: 540
     visible: true
-    title: "AI Meeting Table"
+    title: "Synsemble"
     color: backgroundColor
     font.family: uiFont
     topPadding: topBar.height

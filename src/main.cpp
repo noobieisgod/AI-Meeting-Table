@@ -21,8 +21,10 @@ int main(int argc, char *argv[])
     stageTimer.start();
     QGuiApplication app(argc, argv);
     startup.mark(amt::StartupStage::GuiApplicationConstruction, stageTimer.elapsed());
+    // Keep the legacy application and organization names to preserve QSettings and AppData paths.
     QGuiApplication::setApplicationName("AI Meeting Table");
     QGuiApplication::setOrganizationName("AI Meeting Table");
+    QGuiApplication::setApplicationDisplayName("Synsemble");
     QGuiApplication::setWindowIcon(QIcon(":/branding/icon_logo.png"));
     QQuickStyle::setStyle("Material");
 

@@ -1,43 +1,24 @@
-# AI Meeting Table
+# Synsemble
 
-AI Meeting Table is a native Windows app where multiple AI models work together in a structured, phase-driven workflow with defined roles, software-level authority rules, and a shared artifact used to solve a user task.
+Multi-agent AI collaboration for structured planning, execution, review, and decision-making.
 
-## How to Install
+Synsemble is a multi-agent AI collaboration app that brings multiple AI roles together to plan, execute, review, revise, and produce a final result. It is not primarily an audio meeting recorder, transcription service, or meeting notetaker.
 
-1. Go to [https://github.com/noobieisgod/AI-Meeting-Table/releases](https://github.com/noobieisgod/AI-Meeting-Table/releases).
-2. Download the latest ZIP release.
-3. Unzip the ZIP file.
-4. Open the unzipped folder.
-5. Run `AIMeetingTable.exe`.
+Synsemble was formerly developed under the name AI Meeting Table.
 
-## How to Set Up
+## Core workflow
 
-1. Open Settings.
-2. Under Provider Credentials, enter the API keys you want to use:
-   - OpenAI API Key
-   - Gemini API Key
-   - Anthropic API Key
-3. Optional: click Refresh Models after adding your keys so the app can fetch the latest available models from your configured providers.
-4. Create a new meeting table or edit an existing one.
-5. Configure the seats in the meeting table:
-   - Turn on Seat is occupied for each seat you want to use.
-   - Give each seat a clear Display Name.
-   - Choose a Provider.
-   - Choose a Model.
-   - Choose an Effort level if that model supports it.
-   - Choose a Role.
-6. Make sure you have at least:
-   - one occupied non-final participant seat
-   - one Final Decision Maker seat if you want a judge or decision role
-7. Type your task or instruction into the message box in the transcript pane.
-8. Click Send.
-9. Click Run Session.
+1. Create a table.
+2. Add AI seats one at a time.
+3. Assign each seat a provider, model, and role.
+4. Submit a task.
+5. Let the agents research, plan, execute, and review.
+6. Resolve targeted revisions through the decision workflow.
+7. Produce the final artifact.
 
-### Optional Setup Tips
+## Build and install
 
-- Use Lead Planner, Lead Executioner, and Lead Quality Control if you want a more structured workflow.
-- Use Add Attachment if you want the meeting to work with files.
-- Use Hard Stops in Settings if you want token, round, loop, or time limits.
+The Android app targets arm64 devices running Android 9 or newer. Build and deployment instructions are in [docs/ANDROID_DEPLOYMENT.md](docs/ANDROID_DEPLOYMENT.md). Production signing and Google Play publication remain manual.
 
 ## Why This Is Different From Generic Wrapper Software
 
@@ -57,7 +38,7 @@ The app is designed to coordinate models as a structured team, not just expose s
 
 ## Features
 
-- Native Windows desktop app
+- Native Android app
 - Multi-provider setup across OpenAI, Gemini, and Anthropic
 - Seat-based model configuration
 - Role-based collaboration
@@ -75,13 +56,13 @@ The app is designed to coordinate models as a structured team, not just expose s
 If you are worried about API key safety, this is how the app handles them:
 
 - The app is open source, so the code can be inspected.
-- On Windows, API keys are stored through the Windows Credential Manager rather than being written plainly into the project folder.
+- On Android, API keys are protected by the Android Keystore-backed credential bridge rather than being written plainly into the project folder.
 - The app loads those keys only when it needs to make a provider request.
 - The keys are then sent directly to the selected provider API as normal authentication headers.
-- The app does not require you to log into a central AI Meeting Table account.
-- The app does not route your API calls through a custom AI Meeting Table backend service.
+- The app does not require you to log into a central Synsemble account.
+- The app does not route your API calls through a custom Synsemble backend service.
 
-That means the app is not designed around collecting and proxying your keys through someone else's server. It is a local desktop client that uses your own provider credentials to talk to the provider you selected.
+That means the app is not designed around collecting and proxying your keys through someone else's server. It is a local Android client that uses your own provider credentials to talk to the provider you selected.
 
 You should still use normal caution:
 
@@ -94,4 +75,4 @@ You should still use normal caution:
 This project is licensed under the GNU Affero General Public License v3.0.
 
 Full license text:
-https://github.com/noobieisgod/AI-Meeting-Table/blob/main/LICENSE
+https://github.com/noobieisgod/Synsemble/blob/main/LICENSE

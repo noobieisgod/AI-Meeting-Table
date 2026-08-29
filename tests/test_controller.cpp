@@ -39,7 +39,7 @@ private slots:
 
 void ControllerTests::initTestCase() {
   QStandardPaths::setTestModeEnabled(true);
-  QCoreApplication::setOrganizationName("AI Meeting Table Tests");
+  QCoreApplication::setOrganizationName("Synsemble Tests");
   QCoreApplication::setApplicationName("Controller Tests");
   QDir testData(
       QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));

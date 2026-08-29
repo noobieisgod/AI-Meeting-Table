@@ -1,6 +1,6 @@
-# AI Meeting Table Privacy Policy Site
+# Synsemble Privacy Policy Site
 
-This folder contains the static privacy policy website for the Android app AI Meeting Table.
+This folder contains the static privacy policy website for the Android app Synsemble.
 
 ## Files
 

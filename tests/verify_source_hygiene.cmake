@@ -36,6 +36,8 @@ file(READ "${SOURCE_DIR}/android/src/com/aimeetingtable/mobile/FileBridge.java" 
 file(READ "${SOURCE_DIR}/android/src/com/aimeetingtable/mobile/AttachmentContentProvider.java" attachment_provider_source)
 file(READ "${SOURCE_DIR}/android/AndroidManifest.xml" android_manifest)
 file(READ "${SOURCE_DIR}/android/src/com/aimeetingtable/mobile/BoundedStreamCopier.java" stream_copier_source)
+require_contains("${android_manifest}" "android:label=\"Synsemble\"" "Synsemble Android application label")
+require_absent("${android_manifest}" "android:label=\"AI Meeting Table\"" "legacy Android application label")
 require_contains("${file_bridge_source}" "IMPORT_EXECUTOR.submit" "background Android attachment executor")
 require_contains("${file_bridge_source}" "resolver.openInputStream(uri)" "Android content-provider stream")
 require_contains("${file_bridge_source}" "cancelImport" "Android attachment cancellation")
@@ -69,6 +71,8 @@ require_absent("${controller_header}" "createTable(const QString &title, int sea
 require_absent("${controller_source}" "Saved: %1" "stored credential preview")
 
 file(READ "${SOURCE_DIR}/qml/Main.qml" main_qml_source)
+require_contains("${main_qml_source}" "title: \"Synsemble\"" "Synsemble window title")
+require_absent("${main_qml_source}" "title: \"AI Meeting Table\"" "legacy window title")
 require_contains("${main_qml_source}" "modelStatusRow.modelData.message" "model-refresh status binding")
 require_absent("${main_qml_source}" "modelStatusRow.modelData.status" "stale model-refresh status binding")
 require_contains("${main_qml_source}" "root.addingSeat ? true : occupiedSwitch.checked" "active default for a newly created seat")
@@ -101,6 +105,7 @@ require_contains("${startup_timeline_source}" "m_fullyDrawnReported" "one-shot f
 require_contains("${startup_timeline_source}" "AMT_STARTUP_TIMELINE" "opt-in Release startup diagnostics")
 
 file(READ "${SOURCE_DIR}/CMakeLists.txt" cmake_source)
+require_contains("${cmake_source}" "project(Synsemble VERSION 1.0.0" "Synsemble CMake product metadata")
 require_contains("${cmake_source}" "com.aimeetingtable.myapp" "preserved Android application ID")
 require_contains("${cmake_source}" "QT_ANDROID_MIN_SDK_VERSION 28" "Qt Android minimum SDK")
 require_absent("${cmake_source}" "QT_ANDROID_MIN_SDK_VERSION 26" "obsolete Qt Android minimum SDK")

@@ -132,7 +132,7 @@ public final class FileBridge {
             Intent view = new Intent(Intent.ACTION_VIEW)
                 .setDataAndType(uri, mimeType)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            view.setClipData(ClipData.newRawUri("AI Meeting Table attachment", uri));
+            view.setClipData(ClipData.newRawUri("Synsemble attachment", uri));
             if (view.resolveActivity(context.getPackageManager()) == null) {
                 return NO_COMPATIBLE_APPLICATION;
             }

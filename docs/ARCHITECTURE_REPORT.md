@@ -1,4 +1,4 @@
-# AI Meeting Table Android Architecture Report
+# Synsemble Android Architecture Report
 
 ## Project Split
 

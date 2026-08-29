@@ -89,7 +89,7 @@ private slots:
 
 void AsyncTests::initTestCase() {
   QStandardPaths::setTestModeEnabled(true);
-  QCoreApplication::setOrganizationName("AI Meeting Table Tests");
+  QCoreApplication::setOrganizationName("Synsemble Tests");
   QCoreApplication::setApplicationName("Async Tests");
 }
 

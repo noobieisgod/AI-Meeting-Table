@@ -193,7 +193,7 @@ android:roundIcon="@mipmap/ic_launcher_round"
 APK badging verification:
 
 ```text
-application-label:'AI Meeting Table'
+application-label:'Synsemble'
 application-icon-160:'res/mipmap-anydpi-v26/ic_launcher.xml'
 application-icon-240:'res/mipmap-anydpi-v26/ic_launcher.xml'
 application-icon-320:'res/mipmap-anydpi-v26/ic_launcher.xml'

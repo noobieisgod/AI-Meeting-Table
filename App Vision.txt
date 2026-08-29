@@ -1,7 +1,7 @@
-﻿**AI Meeting Table V1 Spec**
+﻿**Synsemble V1 Spec**
 
 
-`AI Meeting Table` is a native Windows desktop app, intended to be built in C++, that lets multiple AI models collaborate around a virtual meeting table to solve a user task. The app is not a generic multi-chat client. Its core identity is a structured, role-based, phase-driven workflow where multiple AI participants research, discuss, produce an artifact, review it, and then deliver a final result under enforced authority rules.
+`Synsemble` is a native app, built in C++, that lets multiple AI models collaborate around a virtual meeting table to solve a user task. The app is not a generic multi-chat client. Its core identity is a structured, role-based, phase-driven workflow where multiple AI participants research, discuss, produce an artifact, review it, and then deliver a final result under enforced authority rules.
 
 
 The app’s metaphor is a real meeting table. Each AI occupies a seat. The app controls who can speak, who has authority during each phase, and when the session stops. The user watches the process, adds materials, tunes budget and timing, and receives the final output.

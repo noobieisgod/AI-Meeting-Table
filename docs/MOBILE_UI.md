@@ -68,7 +68,7 @@ The layout targets are 360 by 800, 412 by 915, 800 by 1280, and 1280 by 800. Pix
 
 ## Validation and known limitations
 
-Desktop Qt compilation, QML linting, controller tests, QML tests, and the full native test set are part of Phase 3 validation. On Windows, the QML test uses the native platform plugin because the offscreen plugin does not emit the required `windowShown` signal in this environment.
+Desktop Qt compilation, QML linting, controller tests, QML tests, and the full native test set are part of Phase 3 validation. The QML test uses Qt's offscreen platform so it also runs in noninteractive environments.
 
 The Android arm64 debug build configures and packages with the repository's existing Qt, SDK, NDK, Gradle, and CMake process. The post-test correction build completed successfully with Qt 6.11.1 and target API 36. Pixel 10 Pro emulator testing subsequently confirmed the safe-area behavior, orientation changes, gesture navigation, clean-data startup, long composer input, model refresh, named seat colors, and visible provider response extraction.
 

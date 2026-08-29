@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(AIMeetingTable VERSION 1.0.0 LANGUAGES CXX)
+project(Synsemble VERSION 1.0.0 LANGUAGES CXX)
 
 include(CTest)
 

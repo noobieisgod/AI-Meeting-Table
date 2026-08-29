@@ -1,4 +1,4 @@
-# Google Play Privacy Checklist for AI Meeting Table
+# Google Play Privacy Checklist for Synsemble
 
 ## Privacy Policy URL
 
@@ -7,7 +7,8 @@ Before submitting to Google Play, confirm that the published privacy policy URL:
 - Opens in a normal browser without login
 - Is not a PDF
 - Is not geofenced
-- Shows the app name `AI Meeting Table`
+- Shows the app name `Synsemble`
+- Uses the Google Play title `Synsemble: Multi-Agent AI`
 - Shows the developer name `noobieisgod`
 - Shows the contact email `minghorn.tmp@gmail.com`
 - Does not include analytics, ads, tracking scripts, cookies, or external fonts
