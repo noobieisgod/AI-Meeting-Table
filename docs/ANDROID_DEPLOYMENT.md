@@ -103,10 +103,10 @@ C:\Tmp\aimeetingtable-startup-logcat-fixed-2.txt
 
 ## Configure Optimized Release Build
 
-Android 1.0.0 release metadata:
+Android 1.1 release metadata:
 
-- Version name: `1.0.0`
-- Version code: `4`
+- Version name: `1.1`
+- Version code: `5`
 - Package id: `com.aimeetingtable.myapp`
 - ABI: `arm64-v8a`
 

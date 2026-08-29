@@ -1,78 +1,110 @@
 # Synsemble
 
-Multi-agent AI collaboration for structured planning, execution, review, and decision-making.
+Synsemble is a multi-agent AI collaboration app that brings multiple AI roles together to plan, analyze, execute, review, revise, and produce a final result.
 
-Synsemble is a multi-agent AI collaboration app that brings multiple AI roles together to plan, execute, review, revise, and produce a final result. It is not primarily an audio meeting recorder, transcription service, or meeting notetaker.
+Synsemble is not primarily an AI meeting recorder, transcription app, or AI meeting notetaker. Its table and seat metaphor represents multiple AI agents collaborating on a task with assigned providers, models, and roles.
 
-Synsemble was formerly developed under the name AI Meeting Table.
+## What Synsemble Does
 
-## Core workflow
+- Create independent AI tables for separate tasks.
+- Start each table with zero seats and add AI seats one at a time.
+- Assign providers, models, display names, colors, and roles.
+- Give the AI team a task and run it through structured collaboration phases.
+- Produce and manage a final artifact.
+- Preserve tables, sessions, transcripts, and event history locally.
 
-1. Create a table.
-2. Add AI seats one at a time.
-3. Assign each seat a provider, model, and role.
-4. Submit a task.
-5. Let the agents research, plan, execute, and review.
-6. Resolve targeted revisions through the decision workflow.
-7. Produce the final artifact.
+## Multi-Agent Workflow
 
-## Build and install
+Synsemble coordinates agents through planning, research where appropriate, execution, quality control, and decision-making. Agents contribute according to their roles, targeted revisions return to the relevant work, and the final phase produces the authoritative artifact.
 
-The Android app targets arm64 devices running Android 9 or newer. Build and deployment instructions are in [docs/ANDROID_DEPLOYMENT.md](docs/ANDROID_DEPLOYMENT.md). Production signing and Google Play publication remain manual.
+## Key Features
 
-## Why This Is Different From Generic Wrapper Software
+- Multiple persistent tables and sessions
+- Zero-seat table creation and individual Add Seat workflow
+- OpenAI, Google Gemini, and Anthropic providers
+- Configurable models, effort levels, names, colors, and collaboration roles
+- Secure Android API-key storage with saved-state-only credential status
+- Structured multi-agent planning, execution, review, and decision workflows
+- Transcript, session history, and event log
+- Artifact generation and management inside Session
+- File attachments with protected app-private storage
+- Input, output, and total token telemetry
+- User-configurable token, round, loop, phase-time, and session-time limits
+- Pause and Continue without replaying completed provider calls
+- Portrait, landscape, phone, and tablet layouts
+- Light, dark, and system appearance modes
+- Android arm64 support
+- Shared Qt Quick desktop build for development and validation
 
-This app is not just a thin user interface on top of provider APIs.
+## How Limits and Continue Work
 
-It is built around a meeting workflow:
+Users can configure token, round, loop, phase-time, and session-time limits. Reaching a limit pauses the meeting before the pending operation advances. Continue authorizes that pending operation while retaining accumulated token usage and completed responses. Completed provider calls are not replayed, and later limits can pause the meeting again.
 
-- Multiple seats can be assigned to different providers and models in the same session.
-- Each seat has a defined role, not just a label.
-- The workflow moves through explicit phases such as research, planning, execution, quality control, and presentation.
-- The software enforces authority rules at the application level instead of relying only on prompt wording.
-- A Final Decision Maker can evaluate or rule on the meeting instead of every model acting as an equal free-form chatbot.
-- The meeting keeps a shared transcript, event log, and artifact history instead of treating every prompt as an isolated chat turn.
-- Attachments, artifacts, phase logic, and stop policies are part of the runtime model.
+## Privacy and API Keys
 
-The app is designed to coordinate models as a structured team, not just expose several chat boxes behind one interface.
+Users provide their own API keys for supported providers. Android credentials are stored through an Android Keystore-backed bridge. Persisted credentials are never returned to QML or displayed back to the user; the interface shows only whether a credential is Saved.
 
-## Features
+Prompts, selected conversation context, generated content, and user-selected attachments may be sent directly to the configured provider over HTTPS. Review the [privacy policy](docs/index.html) before using sensitive material.
 
-- Native Android app
-- Multi-provider setup across OpenAI, Gemini, and Anthropic
-- Seat-based model configuration
-- Role-based collaboration
-- Phase-driven workflow
-- Final Decision Maker or judge role
-- Shared transcript and event log
-- Shared evolving artifact output
-- Attachment support
-- Configurable hard stops for tokens, rounds, loops, and time
-- Pause, resume, continue, and follow-up meeting flow
-- Local persistence of meetings and UI state
+## Platform
 
-## Why the App Is Not Stealing Your API Keys
+Android is the primary published target. The release build targets `arm64-v8a`, Android 9 or newer, and target SDK 36.
 
-If you are worried about API key safety, this is how the app handles them:
+The Qt Quick application also builds on desktop for development and automated validation. This repository does not claim or distribute a Windows installer for Synsemble 1.1.
 
-- The app is open source, so the code can be inspected.
-- On Android, API keys are protected by the Android Keystore-backed credential bridge rather than being written plainly into the project folder.
-- The app loads those keys only when it needs to make a provider request.
-- The keys are then sent directly to the selected provider API as normal authentication headers.
-- The app does not require you to log into a central Synsemble account.
-- The app does not route your API calls through a custom Synsemble backend service.
+## Building
 
-That means the app is not designed around collecting and proxying your keys through someone else's server. It is a local Android client that uses your own provider credentials to talk to the provider you selected.
+Requirements:
 
-You should still use normal caution:
+- CMake 3.21 or newer
+- A C++20 compiler
+- Qt 6.8 or newer
+- Ninja or another CMake-supported build tool
+- Android SDK with API 36 for Android builds
+- An Android NDK compatible with the installed Qt Android kit
+- A JDK supported by the Qt-generated Gradle project
 
-- Only download releases from the official repository.
-- If you want the highest level of confidence, review the source code and build it yourself.
-- Rotate your API keys if you believe your machine has been compromised.
+Desktop Release build:
+
+```powershell
+qt-cmake -S . -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/desktop
+ctest --test-dir build/desktop --output-on-failure
+```
+
+Android Release bundle:
+
+```powershell
+qt-cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release `
+  -DANDROID_PLATFORM=android-28 `
+  -DANDROID_SDK_ROOT="$env:ANDROID_SDK_ROOT" `
+  -DANDROID_NDK_ROOT="$env:ANDROID_NDK_ROOT" `
+  -DBUILD_TESTING=OFF
+cmake --build build/android --target aab
+```
+
+See [Android deployment](docs/ANDROID_DEPLOYMENT.md), [test plan](docs/TEST_PLAN.md), and [architecture](docs/ARCHITECTURE_REPORT.md) for additional details.
+
+## Testing
+
+Validation includes `qmllint`, the native CTest suite, workflow and hard-stop/Continue tests, provider fixtures, persistence tests, controller tests, QML tests, Java attachment tests, source-hygiene checks, desktop Release compilation, and Android arm64 Release packaging. Tests use fixtures and do not require real provider calls.
+
+## Android Release
+
+- Package: `com.aimeetingtable.myapp`
+- Version name: `1.1`
+- Version code: `5`
+- ABI: `arm64-v8a`
+- Build type: Release
+
+Locally generated unsigned AAB files are not ready for Google Play upload. They must be signed with the correct Play upload or release key without changing the package identity.
+
+## Repository
+
+Source: [github.com/noobieisgod/Synsemble](https://github.com/noobieisgod/Synsemble)
+
+Historical note: Synsemble was formerly developed under the name AI Meeting Table.
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0.
-
-Full license text:
-https://github.com/noobieisgod/Synsemble/blob/main/LICENSE
+Synsemble is licensed under the [GNU Affero General Public License v3.0](LICENSE.txt).
